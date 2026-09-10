@@ -1,0 +1,30 @@
+# Unreal Engine
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+
+# Visual Studio
+.vs/
+*.sln
+*.slnx
+*.suo
+*.user
+*.VC.db
+
+# Unreal backups
+*.uproject.bak
+
+# Build artifacts
+*.pdb
+*.obj
+*.dll
+*.lib
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Personal AI/editor config
+.cursor/
+.gemini/
