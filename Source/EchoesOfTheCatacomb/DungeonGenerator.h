@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
@@ -14,6 +14,15 @@ enum class EDungeonCellType : uint8
 	Solid,
 	Corridor,
 	Room,
+	BossRoom_1,
+	BossRoom_2,
+	BossRoom_3,
+	BossDoor_1_Enter,
+	BossDoor_1_Exit,
+	BossDoor_2_Enter,
+	BossDoor_2_Exit,
+	BossDoor_3_Enter,
+	BossDoor_3_Exit,
 	SpecialRoom_Jewel,
 	SpecialRoom_Beast,
 	SpecialRoom_Exit
@@ -72,6 +81,14 @@ public:
 	UFUNCTION(BlueprintCallable, CallInEditor, Category = "Dungeon")
 	void RegenerateWithNewSeed();
 
+	/** Bakes all instanced components into individual StaticMeshActors for granular per-mesh editing */
+	UFUNCTION(BlueprintCallable, CallInEditor, Category = "Dungeon|Baking")
+	void BakeToStaticMeshActors();
+
+	/** Clears all baked StaticMeshActors from the level */
+	UFUNCTION(BlueprintCallable, CallInEditor, Category = "Dungeon|Baking")
+	void ClearBakedActors();
+
 	// --- Configurable Settings ---
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Settings")
@@ -92,37 +109,73 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Settings")
 	bool bRandomizeSeed;
 
+	/** When enabled, dungeon generation immediately converts instances into individual selectable StaticMeshActors */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Settings")
+	bool bSpawnAsIndividualActors;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Settings", meta = (ClampMin = "0.1", ClampMax = "1.0"))
 	float MazeDensity;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Settings", meta = (ClampMin = "1", ClampMax = "3"))
 	int32 CorridorWidth;
 
-	/** Wall height in Unreal units */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Settings")
 	float WallHeight;
 
-	/** Minimum padding (in cells) maintained between rooms */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Settings", meta = (ClampMin = "1", ClampMax = "4"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Settings")
 	int32 RoomPadding;
 
-	/** Probability of opening extra passages to create loops and alternate routes */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Settings", meta = (ClampMin = "0.0", ClampMax = "0.5"))
 	float LoopProbability;
 
-	/** Probability of placing a decorative wall instead of standard wall */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Settings", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float DecorativeWallRatio;
 
-	/** Approximate distance between wall torches */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Settings", meta = (ClampMin = "2", ClampMax = "10"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Settings")
 	int32 TorchInterval;
 
-	// --- Gameplay Locations ---
+	// --- 3-Stage Canon Event Locations ---
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|Locations")
 	FVector PlayerSpawnLocation;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|BossRooms")
+	FVector Boss1RoomLocation;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|BossRooms")
+	FVector Boss1SpawnLocation;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|BossRooms")
+	FVector Boss1EntranceDoorLocation;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|BossRooms")
+	FVector Boss1ExitDoorLocation;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|BossRooms")
+	FVector Boss2RoomLocation;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|BossRooms")
+	FVector Boss2SpawnLocation;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|BossRooms")
+	FVector Boss2EntranceDoorLocation;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|BossRooms")
+	FVector Boss2ExitDoorLocation;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|BossRooms")
+	FVector Boss3RoomLocation;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|BossRooms")
+	FVector Boss3SpawnLocation;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|BossRooms")
+	FVector Boss3EntranceDoorLocation;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|BossRooms")
+	FVector Boss3ExitDoorLocation;
+
+	// Backward-compatible location aliases
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|Locations")
 	FVector JewelRoomLocation;
 
@@ -151,6 +204,15 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Dungeon|Locations")
 	FVector GetPlayerSpawnLocation() const { return PlayerSpawnLocation; }
+
+	UFUNCTION(BlueprintPure, Category = "Dungeon|BossRooms")
+	FVector GetBoss1SpawnLocation() const { return Boss1SpawnLocation; }
+
+	UFUNCTION(BlueprintPure, Category = "Dungeon|BossRooms")
+	FVector GetBoss2SpawnLocation() const { return Boss2SpawnLocation; }
+
+	UFUNCTION(BlueprintPure, Category = "Dungeon|BossRooms")
+	FVector GetBoss3SpawnLocation() const { return Boss3SpawnLocation; }
 
 	UFUNCTION(BlueprintPure, Category = "Dungeon|Locations")
 	FVector GetJewelRoomLocation() const { return JewelRoomLocation; }
@@ -194,16 +256,10 @@ public:
 	TSoftObjectPtr<UStaticMesh> WallTrimMesh;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Meshes")
-	TSoftObjectPtr<UStaticMesh> DoorwayMesh;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Meshes")
 	TSoftObjectPtr<UStaticMesh> PillarMesh;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Meshes")
-	TSoftObjectPtr<UStaticMesh> TorchMesh;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Meshes")
-	TSubclassOf<AActor> TorchBlueprintClass;
+	TSoftObjectPtr<UStaticMesh> DoorwayMesh;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Meshes")
 	TSoftObjectPtr<UStaticMesh> AltarMesh;
@@ -217,49 +273,52 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Meshes")
 	TSoftObjectPtr<UStaticMesh> StatueMesh;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Blueprints")
+	TSubclassOf<AActor> TorchBlueprintClass;
+
 	// --- Instanced Static Mesh Components ---
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|Components")
-	TObjectPtr<UInstancedStaticMeshComponent> FloorInstances;
+	UInstancedStaticMeshComponent* FloorInstances;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|Components")
-	TObjectPtr<UInstancedStaticMeshComponent> CeilingInstances;
+	UInstancedStaticMeshComponent* CeilingInstances;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|Components")
-	TObjectPtr<UInstancedStaticMeshComponent> RoofInstances;
+	UInstancedStaticMeshComponent* RoofInstances;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|Components")
-	TObjectPtr<UInstancedStaticMeshComponent> WallInstances;
+	UInstancedStaticMeshComponent* WallInstances;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|Components")
-	TObjectPtr<UInstancedStaticMeshComponent> DecorativeWallInstances;
+	UInstancedStaticMeshComponent* DecorativeWallInstances;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|Components")
-	TObjectPtr<UInstancedStaticMeshComponent> WallTrimInstances;
+	UInstancedStaticMeshComponent* WallTrimInstances;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|Components")
-	TObjectPtr<UInstancedStaticMeshComponent> DoorwayInstances;
+	UInstancedStaticMeshComponent* PillarInstances;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|Components")
-	TObjectPtr<UInstancedStaticMeshComponent> PillarInstances;
+	UInstancedStaticMeshComponent* DoorwayInstances;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|Components")
-	TObjectPtr<UInstancedStaticMeshComponent> TorchInstances;
+	UInstancedStaticMeshComponent* TorchInstances;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|Components")
-	TObjectPtr<UInstancedStaticMeshComponent> AltarInstances;
+	UInstancedStaticMeshComponent* AltarInstances;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|Components")
-	TObjectPtr<UInstancedStaticMeshComponent> CoffinInstances;
+	UInstancedStaticMeshComponent* CoffinInstances;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|Components")
-	TObjectPtr<UInstancedStaticMeshComponent> PotInstances;
+	UInstancedStaticMeshComponent* PotInstances;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|Components")
-	TObjectPtr<UInstancedStaticMeshComponent> StatueInstances;
+	UInstancedStaticMeshComponent* StatueInstances;
 
 protected:
-	/** Controlled random number stream for deterministic reproducibility */
+	/** Deterministic pseudo-random number generator for seeded levels */
 	FRandomStream RandomStream;
 
 	/** 2D grid storing cell types */
@@ -268,31 +327,35 @@ protected:
 	/** Placed rooms */
 	TArray<FDungeonRoom> Rooms;
 
-	/** Special room indices in Rooms array */
-	int32 JewelRoomIndex = INDEX_NONE;
-	int32 BeastRoomIndex = INDEX_NONE;
-	int32 ExitRoomIndex = INDEX_NONE;
+	/** Room indices for the 3 boss arenas */
+	int32 Boss1RoomIndex = INDEX_NONE;
+	int32 Boss2RoomIndex = INDEX_NONE;
+	int32 Boss3RoomIndex = INDEX_NONE;
 
-	/** Set of cells blocked by props to avoid player spawning inside props */
+	/** Set of cells blocked by props */
 	TSet<FIntPoint> PropBlockedCells;
 
-	/** Weak pointers to spawned torch actors for clean lifecycle management */
+	/** Weak pointers to spawned torch actors */
 	UPROPERTY()
 	TArray<TWeakObjectPtr<AActor>> SpawnedTorches;
+
+	/** Weak pointers to baked static mesh actors */
+	UPROPERTY()
+	TArray<TWeakObjectPtr<AActor>> BakedActors;
 
 	// Internal generation pipeline methods
 	void InitializeComponents();
 	void EnsureMeshesLoaded();
 	bool GenerateDungeonLayout();
-	void PlaceSpecialRooms();
-	void PlaceGenericRooms();
-	void CarveMazeCorridors();
-	void ConnectRoomsToMaze();
-	void AddLoopConnections();
-	bool ValidateConnectivity();
+	void BuildBossArenas();
+	void CarveCryptChamber(int32 OriginX, int32 OriginY, int32 W, int32 H);
+	void CarveSectorMaze(int32 MinX, int32 MaxX, int32 MinY, int32 MaxY, FIntPoint StartCell, FIntPoint EndCell);
+	void ConnectPointToNearestCorridor(FIntPoint Pt, int32 MinX, int32 MaxX, int32 MinY, int32 MaxY);
+	void AddSectorLoops(int32 MinX, int32 MaxX, int32 MinY, int32 MaxY, float LoopProb);
 	void BuildGeometryInstances();
 	void PlaceWallPillars();
 	void PlaceEnvironmentalProps();
+	void PlaceBossRoomTorches(const FDungeonRoom& Room);
 	void ClearSpawnedTorches();
 	void SpawnTorchActor(const FTransform& Transform);
 	bool SelectAndSetPlayerSpawn();
@@ -310,34 +373,27 @@ protected:
 
 	FORCEINLINE EDungeonCellType GetCell(int32 X, int32 Y) const
 	{
-		int32 Index = GetGridIndex(X, Y);
-		if (!IsValidCell(X, Y) || !Grid.IsValidIndex(Index)) return EDungeonCellType::Solid;
-		return Grid[Index];
+		if (!IsValidCell(X, Y)) return EDungeonCellType::Solid;
+		return Grid[GetGridIndex(X, Y)];
 	}
 
 	FORCEINLINE void SetCell(int32 X, int32 Y, EDungeonCellType Type)
 	{
-		int32 Index = GetGridIndex(X, Y);
-		if (IsValidCell(X, Y) && Grid.IsValidIndex(Index))
+		if (IsValidCell(X, Y))
 		{
-			Grid[Index] = Type;
+			Grid[GetGridIndex(X, Y)] = Type;
 		}
 	}
 
 	FORCEINLINE bool IsWalkable(int32 X, int32 Y) const
 	{
 		if (!IsValidCell(X, Y)) return false;
-		EDungeonCellType Type = GetCell(X, Y);
-		return Type != EDungeonCellType::Solid;
+		return Grid[GetGridIndex(X, Y)] != EDungeonCellType::Solid;
 	}
 
-	FVector GridToWorld(int32 X, int32 Y, float Z = 0.0f) const
+	FORCEINLINE FVector GridToWorldCenter(int32 X, int32 Y, float Z = 0.0f) const
 	{
-		return FVector(X * TileSize, Y * TileSize, Z);
-	}
-
-	FVector GridToWorldCenter(int32 X, int32 Y, float Z = 0.0f) const
-	{
-		return FVector(X * TileSize + TileSize * 0.5f, Y * TileSize + TileSize * 0.5f, Z);
+		const float FTile = (float)TileSize;
+		return FVector((X + 0.5f) * FTile, (Y + 0.5f) * FTile, Z);
 	}
 };

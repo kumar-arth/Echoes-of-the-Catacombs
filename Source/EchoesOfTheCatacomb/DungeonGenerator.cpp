@@ -2,25 +2,30 @@
 
 #include "DungeonGenerator.h"
 #include "Engine/World.h"
+#include "Engine/StaticMeshActor.h"
+#include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/Pawn.h"
-#include "Components/SceneComponent.h"
-#include "Components/PointLightComponent.h"
-#include "Containers/Queue.h"
 #include "EngineUtils.h"
+#include "Containers/Queue.h"
 
 ADungeonGenerator::ADungeonGenerator()
 {
 	PrimaryActorTick.bCanEverTick = false;
+	bReplicates = false;
 
-	// Grid Defaults
+	USceneComponent* SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
+	RootComponent = SceneRoot;
+
+	// Default Generation Settings
 	TileSize = 500;
 	GridSize = 31;
-	MinRoomSize = 3;
-	MaxRoomSize = 5;
-	Seed = 12345;
-	bRandomizeSeed = true;
+	MinRoomSize = 5;
+	MaxRoomSize = 7;
+	Seed = 821797;
+	bRandomizeSeed = false;
+	bSpawnAsIndividualActors = true;
 	MazeDensity = 0.85f;
 	CorridorWidth = 1;
 	WallHeight = 450.0f;
@@ -29,36 +34,45 @@ ADungeonGenerator::ADungeonGenerator()
 	DecorativeWallRatio = 0.25f;
 	TorchInterval = 4;
 
-	// Set Root Component
-	USceneComponent* SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
-	RootComponent = SceneRoot;
-
-	// Default Medieval Dungeon Mesh Asset References
-	FloorMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/MedievalDungeon/Meshes/Architecture/Crypt/SM_Crypt_Floor.SM_Crypt_Floor")));
+	// Asset Paths from MedievalDungeon
+	FloorMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/MedievalDungeon/Meshes/Architecture/Crypt/SM_Crypt_Floor_Trim_01.SM_Crypt_Floor_Trim_01")));
+	CeilingMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/MedievalDungeon/Meshes/Architecture/Crypt/SM_Crypt_Ceiling_Arched.SM_Crypt_Ceiling_Arched")));
 	WallMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/MedievalDungeon/Meshes/Architecture/Crypt/SM_Crypt_Wall.SM_Crypt_Wall")));
 	DecorativeWallMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/MedievalDungeon/Meshes/Architecture/Crypt/SM_Crypt_Wall_Decorative_A.SM_Crypt_Wall_Decorative_A")));
-	WallTrimMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/MedievalDungeon/Meshes/Architecture/Crypt/SM_Crypt_Wall_Floor_Trim.SM_Crypt_Wall_Floor_Trim")));
+	WallTrimMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/MedievalDungeon/Meshes/Architecture/Crypt/SM_Crypt_Floor_Trim_02.SM_Crypt_Floor_Trim_02")));
+	PillarMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/MedievalDungeon/Meshes/Architecture/Crypt/SM_Crypt_Pillar.SM_Crypt_Pillar")));
 	DoorwayMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/MedievalDungeon/Meshes/Architecture/Crypt/SM_Crypt_Doorway.SM_Crypt_Doorway")));
-	CeilingMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/MedievalDungeon/Meshes/Architecture/Crypt/SM_Crypt_Ceiling_Flat.SM_Crypt_Ceiling_Flat")));
-	PillarMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/MedievalDungeon/Meshes/Architecture/Dungeon/SM_Pillar.SM_Pillar")));
-	TorchMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/MedievalDungeon/Meshes/Props/SM_Torch.SM_Torch")));
-	TorchBlueprintClass = TSoftClassPtr<AActor>(FSoftObjectPath(TEXT("/Game/MedievalDungeon/Blueprints/BP_Torch.BP_Torch_C"))).LoadSynchronous();
-	AltarMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/MedievalDungeon/Meshes/Props/SM_Alter.SM_Alter")));
-	CoffinMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/MedievalDungeon/Meshes/Props/SM_Stone_Coffin.SM_Stone_Coffin")));
-	PotMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/MedievalDungeon/Meshes/Props/SM_Pot_A_Complete.SM_Pot_A_Complete")));
-	StatueMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/MedievalDungeon/Meshes/Props/SM_Gargoyle_Statue_On_Stand.SM_Gargoyle_Statue_On_Stand")));
+	AltarMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/MedievalDungeon/Meshes/Props/SM_Altar.SM_Altar")));
+	CoffinMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/MedievalDungeon/Meshes/Props/SM_Coffin.SM_Coffin")));
+	PotMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/MedievalDungeon/Meshes/Props/SM_Urn_01.SM_Urn_01")));
+	StatueMesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/MedievalDungeon/Meshes/Props/SM_Gargoyle_Statue.SM_Gargoyle_Statue")));
 
-	// Helper lambda for creating ISM components with collision enabled
-	auto CreateISM = [this, SceneRoot](const TCHAR* Name) -> UInstancedStaticMeshComponent*
+	static ConstructorHelpers::FClassFinder<AActor> TorchBPClass(TEXT("/Game/MedievalDungeon/Blueprints/BP_Torch"));
+	if (TorchBPClass.Succeeded())
 	{
-		UInstancedStaticMeshComponent* ISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(FName(Name));
-		ISM->SetupAttachment(SceneRoot);
-		ISM->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-		ISM->SetCollisionObjectType(ECC_WorldStatic);
-		ISM->SetCollisionResponseToAllChannels(ECR_Block);
-		ISM->bDisableCollision = false;
-		ISM->SetGenerateOverlapEvents(false);
-		return ISM;
+		TorchBlueprintClass = TorchBPClass.Class;
+	}
+
+	InitializeComponents();
+}
+
+void ADungeonGenerator::InitializeComponents()
+{
+	auto CreateISM = [this](const TCHAR* CompName) -> UInstancedStaticMeshComponent*
+	{
+		UInstancedStaticMeshComponent* Comp = CreateDefaultSubobject<UInstancedStaticMeshComponent>(CompName);
+		if (Comp)
+		{
+			Comp->SetupAttachment(RootComponent);
+			Comp->SetMobility(EComponentMobility::Static);
+			Comp->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+			Comp->SetCollisionObjectType(ECC_WorldStatic);
+			Comp->SetCollisionResponseToAllChannels(ECR_Block);
+			Comp->SetGenerateOverlapEvents(false);
+			Comp->bCastDynamicShadow = true;
+			Comp->CastShadow = true;
+		}
+		return Comp;
 	};
 
 	FloorInstances = CreateISM(TEXT("FloorInstances"));
@@ -67,8 +81,8 @@ ADungeonGenerator::ADungeonGenerator()
 	WallInstances = CreateISM(TEXT("WallInstances"));
 	DecorativeWallInstances = CreateISM(TEXT("DecorativeWallInstances"));
 	WallTrimInstances = CreateISM(TEXT("WallTrimInstances"));
-	DoorwayInstances = CreateISM(TEXT("DoorwayInstances"));
 	PillarInstances = CreateISM(TEXT("PillarInstances"));
+	DoorwayInstances = CreateISM(TEXT("DoorwayInstances"));
 	TorchInstances = CreateISM(TEXT("TorchInstances"));
 	AltarInstances = CreateISM(TEXT("AltarInstances"));
 	CoffinInstances = CreateISM(TEXT("CoffinInstances"));
@@ -79,14 +93,13 @@ ADungeonGenerator::ADungeonGenerator()
 void ADungeonGenerator::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
-	GenerateDungeon();
+	// Do not call GenerateDungeon() here: spawning actors inside OnConstruction
+	// causes Unreal Engine to automatically parent all spawned actors under DungeonGenerator.
 }
 
 void ADungeonGenerator::PostLoad()
 {
 	Super::PostLoad();
-
-	// Automatically build the maze when opening Level1 or reopening Unreal
 	if (GetWorld() && !GetWorld()->IsGameWorld())
 	{
 		GenerateDungeon();
@@ -96,7 +109,6 @@ void ADungeonGenerator::PostLoad()
 void ADungeonGenerator::PostActorCreated()
 {
 	Super::PostActorCreated();
-
 	if (GetWorld() && !GetWorld()->IsGameWorld())
 	{
 		GenerateDungeon();
@@ -107,26 +119,63 @@ void ADungeonGenerator::PostActorCreated()
 void ADungeonGenerator::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {
 	Super::PostEditChangeProperty(PropertyChangedEvent);
-
-	// Automatically update when any property changes in Details panel
 	GenerateDungeon();
+
+	TArray<AActor*> Attached;
+	GetAttachedActors(Attached);
+	for (AActor* Act : Attached)
+	{
+		if (Act)
+		{
+			Act->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+			Act->SetFolderPath(FName(TEXT("Dungeon_Torches")));
+		}
+	}
 }
 #endif
 
 void ADungeonGenerator::BeginPlay()
 {
 	Super::BeginPlay();
-
-	// Always generate in PIE world to ensure full grid state, geometry, and collision
 	GenerateDungeon();
 
-	// Teleport local player pawn to the generated PlayerSpawnLocation
 	APawn* PlayerPawn = UGameplayStatics::GetPlayerPawn(GetWorld(), 0);
 	if (PlayerPawn && !PlayerSpawnLocation.IsZero())
 	{
-		PlayerPawn->SetActorLocation(PlayerSpawnLocation, false, nullptr, ETeleportType::TeleportPhysics);
-		UE_LOG(LogTemp, Log, TEXT("DungeonGenerator: Teleported player pawn to spawn location: %s"), *PlayerSpawnLocation.ToString());
+		PlayerPawn->SetActorLocation(PlayerSpawnLocation + FVector(0.0f, 0.0f, 50.0f));
 	}
+}
+
+void ADungeonGenerator::EnsureMeshesLoaded()
+{
+	auto AssignMesh = [](UInstancedStaticMeshComponent* Comp, TSoftObjectPtr<UStaticMesh>& SoftMesh)
+	{
+		if (Comp && SoftMesh.IsValid())
+		{
+			UStaticMesh* Loaded = SoftMesh.Get();
+			if (!Loaded)
+			{
+				Loaded = SoftMesh.LoadSynchronous();
+			}
+			if (Loaded)
+			{
+				Comp->SetStaticMesh(Loaded);
+			}
+		}
+	};
+
+	AssignMesh(FloorInstances, FloorMesh);
+	AssignMesh(CeilingInstances, CeilingMesh);
+	AssignMesh(RoofInstances, FloorMesh);
+	AssignMesh(WallInstances, WallMesh);
+	AssignMesh(DecorativeWallInstances, DecorativeWallMesh);
+	AssignMesh(WallTrimInstances, WallTrimMesh);
+	AssignMesh(PillarInstances, PillarMesh);
+	AssignMesh(DoorwayInstances, DoorwayMesh);
+	AssignMesh(AltarInstances, AltarMesh);
+	AssignMesh(CoffinInstances, CoffinMesh);
+	AssignMesh(PotInstances, PotMesh);
+	AssignMesh(StatueInstances, StatueMesh);
 }
 
 void ADungeonGenerator::GenerateDungeon()
@@ -138,66 +187,53 @@ void ADungeonGenerator::GenerateDungeon()
 	RandomStream.Initialize(Seed);
 
 	EnsureMeshesLoaded();
+	ClearDungeon();
 
-	const int32 MaxAttempts = 15;
-	bool bSuccess = false;
-
-	for (int32 Attempt = 0; Attempt < MaxAttempts; ++Attempt)
+	if (GenerateDungeonLayout())
 	{
-		ClearDungeon();
-
-		if (GenerateDungeonLayout())
-		{
-			BuildGeometryInstances();
-			PlaceEnvironmentalProps();
-			if (SelectAndSetPlayerSpawn())
-			{
-				bSuccess = true;
-				break;
-			}
-		}
-	}
-
-	if (!bSuccess)
-	{
-		UE_LOG(LogTemp, Error, TEXT("DungeonGenerator: Failed to generate valid connected dungeon after %d attempts!"), MaxAttempts);
-		return;
-	}
-
-	// Comprehensive UE_LOG summary
-	int32 WalkableCount = 0;
-	for (EDungeonCellType Cell : Grid)
-	{
-		if (Cell != EDungeonCellType::Solid)
-		{
-			WalkableCount++;
-		}
+		BuildGeometryInstances();
+		PlaceEnvironmentalProps();
+		SelectAndSetPlayerSpawn();
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("=================================================="));
-	UE_LOG(LogTemp, Log, TEXT("           DUNGEON GENERATION COMPLETE            "));
+	UE_LOG(LogTemp, Log, TEXT("     3-STAGE CANON EVENT DUNGEON GENERATED        "));
 	UE_LOG(LogTemp, Log, TEXT("=================================================="));
-	UE_LOG(LogTemp, Log, TEXT("Seed:                    %d (Randomized: %s)"), Seed, bRandomizeSeed ? TEXT("True") : TEXT("False"));
-	UE_LOG(LogTemp, Log, TEXT("Grid Size:               %dx%d (%d units tile)"), GridSize, GridSize, TileSize);
-	UE_LOG(LogTemp, Log, TEXT("Number of Rooms:         %d (Jewel, Beast, Exit + Generics)"), Rooms.Num());
-	UE_LOG(LogTemp, Log, TEXT("Walkable Cells:          %d"), WalkableCount);
-	UE_LOG(LogTemp, Log, TEXT("Floor Instances:         %d"), FloorInstances->GetInstanceCount());
-	UE_LOG(LogTemp, Log, TEXT("Wall Instances:          %d"), WallInstances->GetInstanceCount() + DecorativeWallInstances->GetInstanceCount());
-	UE_LOG(LogTemp, Log, TEXT("Doorway Instances:       %d"), DoorwayInstances->GetInstanceCount());
-	UE_LOG(LogTemp, Log, TEXT("Pillar Instances:        %d"), PillarInstances->GetInstanceCount());
-	UE_LOG(LogTemp, Log, TEXT("Torch Instances:         %d"), TorchInstances->GetInstanceCount());
-	UE_LOG(LogTemp, Log, TEXT("Prop Instances:          %d"), AltarInstances->GetInstanceCount() + CoffinInstances->GetInstanceCount() + PotInstances->GetInstanceCount() + StatueInstances->GetInstanceCount());
+	UE_LOG(LogTemp, Log, TEXT("Seed:                    %d"), Seed);
 	UE_LOG(LogTemp, Log, TEXT("Player Spawn Location:   %s"), *PlayerSpawnLocation.ToString());
-	UE_LOG(LogTemp, Log, TEXT("Jewel Room Location:     %s"), *JewelRoomLocation.ToString());
-	UE_LOG(LogTemp, Log, TEXT("  - Jewel Location:      %s"), *JewelLocation.ToString());
-	UE_LOG(LogTemp, Log, TEXT("  - Jewel Beast:         %s"), *JewelBeastLocation.ToString());
-	UE_LOG(LogTemp, Log, TEXT("Beast Room Location:     %s"), *BeastRoomLocation.ToString());
-	UE_LOG(LogTemp, Log, TEXT("  - Beast Location:      %s"), *BeastLocation.ToString());
-	UE_LOG(LogTemp, Log, TEXT("Exit Room Location:      %s"), *ExitRoomLocation.ToString());
-	UE_LOG(LogTemp, Log, TEXT("  - Exit Door Location:  %s"), *ExitDoorLocation.ToString());
-	UE_LOG(LogTemp, Log, TEXT("  - Exit Beast Location: %s"), *ExitBeastLocation.ToString());
-	UE_LOG(LogTemp, Log, TEXT("Connectivity Result:     VALID (All special rooms connected)"));
+	UE_LOG(LogTemp, Log, TEXT("Boss 1 Room Location:    %s"), *Boss1RoomLocation.ToString());
+	UE_LOG(LogTemp, Log, TEXT("  - Boss 1 Spawn:        %s"), *Boss1SpawnLocation.ToString());
+	UE_LOG(LogTemp, Log, TEXT("  - Boss 1 Entrance:     %s"), *Boss1EntranceDoorLocation.ToString());
+	UE_LOG(LogTemp, Log, TEXT("  - Boss 1 Exit:         %s"), *Boss1ExitDoorLocation.ToString());
+	UE_LOG(LogTemp, Log, TEXT("Boss 2 Room Location:    %s"), *Boss2RoomLocation.ToString());
+	UE_LOG(LogTemp, Log, TEXT("  - Boss 2 Spawn:        %s"), *Boss2SpawnLocation.ToString());
+	UE_LOG(LogTemp, Log, TEXT("  - Boss 2 Entrance:     %s"), *Boss2EntranceDoorLocation.ToString());
+	UE_LOG(LogTemp, Log, TEXT("  - Boss 2 Exit:         %s"), *Boss2ExitDoorLocation.ToString());
+	UE_LOG(LogTemp, Log, TEXT("Boss 3 Room Location:    %s"), *Boss3RoomLocation.ToString());
+	UE_LOG(LogTemp, Log, TEXT("  - Boss 3 Spawn:        %s"), *Boss3SpawnLocation.ToString());
+	UE_LOG(LogTemp, Log, TEXT("  - Boss 3 Entrance:     %s"), *Boss3EntranceDoorLocation.ToString());
+	UE_LOG(LogTemp, Log, TEXT("  - Boss 3 Final Exit:   %s"), *Boss3ExitDoorLocation.ToString());
 	UE_LOG(LogTemp, Log, TEXT("=================================================="));
+
+		if (bSpawnAsIndividualActors)
+	{
+		BakeToStaticMeshActors();
+	}
+
+#if WITH_EDITOR
+	for (TWeakObjectPtr<AActor>& TorchPtr : SpawnedTorches)
+	{
+		if (AActor* Torch = TorchPtr.Get())
+		{
+			if (USceneComponent* Root = Torch->GetRootComponent())
+			{
+				Root->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+			}
+			Torch->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+			Torch->SetFolderPath(FName(TEXT("Dungeon_Torches")));
+		}
+	}
+#endif
 }
 
 void ADungeonGenerator::RegenerateDungeon()
@@ -231,566 +267,485 @@ void ADungeonGenerator::ClearDungeon()
 	Rooms.Empty();
 	PropBlockedCells.Empty();
 
-	JewelRoomIndex = INDEX_NONE;
-	BeastRoomIndex = INDEX_NONE;
-	ExitRoomIndex = INDEX_NONE;
+	Boss1RoomIndex = INDEX_NONE;
+	Boss2RoomIndex = INDEX_NONE;
+	Boss3RoomIndex = INDEX_NONE;
 
 	ClearSpawnedTorches();
+	ClearBakedActors();
 }
 
 void ADungeonGenerator::ClearSpawnedTorches()
 {
-	// 1. Destroy any in-memory tracked torches
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	TSet<AActor*> TorchesToDestroy;
+
 	for (TWeakObjectPtr<AActor>& TorchPtr : SpawnedTorches)
 	{
 		if (TorchPtr.IsValid())
 		{
-			TorchPtr->Destroy();
+			TorchesToDestroy.Add(TorchPtr.Get());
 		}
 	}
 	SpawnedTorches.Empty();
 
-	// 2. Destroy all actors attached to this generator tagged as DungeonTorch
 	TArray<AActor*> AttachedActors;
 	GetAttachedActors(AttachedActors);
 	for (AActor* Child : AttachedActors)
 	{
-		if (Child && (Child->ActorHasTag(TEXT("DungeonTorch")) || (TorchBlueprintClass && Child->IsA(TorchBlueprintClass))))
+		if (IsValid(Child) && (Child->ActorHasTag(TEXT("DungeonTorch")) || (TorchBlueprintClass && Child->IsA(TorchBlueprintClass))))
 		{
-			Child->Destroy();
+			TorchesToDestroy.Add(Child);
 		}
 	}
 
-	// 3. Scan world to completely purge any torches from previous generation sessions
-	if (UWorld* World = GetWorld())
+	for (TActorIterator<AActor> It(World); It; ++It)
 	{
-		for (TActorIterator<AActor> It(World); It; ++It)
+		AActor* Actor = *It;
+		if (IsValid(Actor) && Actor != this)
 		{
-			AActor* Actor = *It;
-			if (Actor && Actor != this)
-			{
-				bool bIsTorch = Actor->ActorHasTag(TEXT("DungeonTorch")) ||
-				                Actor->GetOwner() == this ||
-				                Actor->GetAttachParentActor() == this;
+			bool bIsTorch = Actor->ActorHasTag(TEXT("DungeonTorch")) ||
+			                (TorchBlueprintClass && Actor->IsA(TorchBlueprintClass));
 #if WITH_EDITOR
-				if (!bIsTorch && Actor->GetFolderPath() == FName(TEXT("Dungeon_Torches")))
-				{
-					bIsTorch = true;
-				}
-#endif
-				if (bIsTorch)
-				{
-					Actor->Destroy();
-				}
+			if (!bIsTorch && Actor->GetFolderPath() == FName(TEXT("Dungeon_Torches")))
+			{
+				bIsTorch = true;
 			}
+#endif
+			if (bIsTorch)
+			{
+				TorchesToDestroy.Add(Actor);
+			}
+		}
+	}
+
+	for (AActor* Torch : TorchesToDestroy)
+	{
+		if (IsValid(Torch))
+		{
+			// Safely detach first if attached to prevent detachment assertion
+			if (Torch->GetAttachParentActor())
+			{
+				Torch->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+			}
+			World->DestroyActor(Torch, false, false);
 		}
 	}
 }
 
 void ADungeonGenerator::SpawnTorchActor(const FTransform& Transform)
 {
-	// Spawn functional BP_Torch actor with fire particles and flickering point light
 	UWorld* World = GetWorld();
-	bool bSpawnedActor = false;
-	if (World && TorchBlueprintClass)
-	{
-		FActorSpawnParameters SpawnParams;
-		SpawnParams.Owner = this;
-		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	if (!World || !TorchBlueprintClass) return;
 
-		AActor* TorchActor = World->SpawnActor<AActor>(TorchBlueprintClass, Transform, SpawnParams);
-		if (TorchActor)
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = nullptr;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	SpawnParams.OverrideLevel = World->GetCurrentLevel();
+
+	AActor* TorchActor = World->SpawnActor<AActor>(TorchBlueprintClass, Transform, SpawnParams);
+	if (TorchActor)
+	{
+		TorchActor->Tags.AddUnique(TEXT("DungeonTorch"));
+		if (USceneComponent* Root = TorchActor->GetRootComponent())
 		{
-			TorchActor->AttachToActor(this, FAttachmentTransformRules::KeepWorldTransform);
-			TorchActor->Tags.AddUnique(FName(TEXT("DungeonTorch")));
+			Root->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+		}
+		TorchActor->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
 #if WITH_EDITOR
-			TorchActor->SetFolderPath(FName(TEXT("Dungeon_Torches")));
+		TorchActor->SetFolderPath(FName(TEXT("Dungeon_Torches")));
+		TorchActor->SetActorLabel(FString::Printf(TEXT("Torch_%d"), SpawnedTorches.Num() + 1));
 #endif
-			TArray<UPointLightComponent*> Lights;
-			TorchActor->GetComponents<UPointLightComponent>(Lights);
-			for (UPointLightComponent* LightComp : Lights)
-			{
-				if (LightComp)
-				{
-					LightComp->SetIntensity(40.0f);
-					LightComp->SetAttenuationRadius(750.0f);
-				}
-			}
-			SpawnedTorches.Add(TorchActor);
-			bSpawnedActor = true;
-		}
-	}
-
-	// Fallback to static mesh instance only if actor could not be spawned
-	if (!bSpawnedActor && TorchInstances)
-	{
-		TorchInstances->AddInstance(Transform);
+		SpawnedTorches.Add(TorchActor);
 	}
 }
-
-void ADungeonGenerator::EnsureMeshesLoaded()
-{
-	auto AssignMesh = [](UInstancedStaticMeshComponent* ISM, TSoftObjectPtr<UStaticMesh>& SoftMesh)
-	{
-		if (ISM && SoftMesh.IsValid())
-		{
-			ISM->SetStaticMesh(SoftMesh.Get());
-		}
-		else if (ISM)
-		{
-			UStaticMesh* Loaded = SoftMesh.LoadSynchronous();
-			if (Loaded)
-			{
-				ISM->SetStaticMesh(Loaded);
-			}
-		}
-	};
-
-	AssignMesh(FloorInstances, FloorMesh);
-	AssignMesh(CeilingInstances, CeilingMesh);
-	AssignMesh(RoofInstances, FloorMesh);
-	AssignMesh(WallInstances, WallMesh);
-	AssignMesh(DecorativeWallInstances, DecorativeWallMesh);
-	AssignMesh(WallTrimInstances, WallTrimMesh);
-	AssignMesh(DoorwayInstances, DoorwayMesh);
-	AssignMesh(PillarInstances, PillarMesh);
-	AssignMesh(TorchInstances, TorchMesh);
-	AssignMesh(AltarInstances, AltarMesh);
-	AssignMesh(CoffinInstances, CoffinMesh);
-	AssignMesh(PotInstances, PotMesh);
-	AssignMesh(StatueInstances, StatueMesh);
-
-	if (!TorchBlueprintClass)
-	{
-		TorchBlueprintClass = TSoftClassPtr<AActor>(FSoftObjectPath(TEXT("/Game/MedievalDungeon/Blueprints/BP_Torch.BP_Torch_C"))).LoadSynchronous();
-	}
-}
-
 bool ADungeonGenerator::GenerateDungeonLayout()
 {
-	// Enforce odd grid size for maze algorithms
-	if (GridSize % 2 == 0)
-	{
-		GridSize += 1;
-	}
-
+	GridSize = 31;
 	Grid.Init(EDungeonCellType::Solid, GridSize * GridSize);
 	Rooms.Empty();
 
-	// 1. Place the 3 Mandatory Special Rooms
-	PlaceSpecialRooms();
+	// 1. Build the 3 Boss Arenas (Unskippable Chokepoints)
+	BuildBossArenas();
 
-	// 2. Place Additional Medieval Chambers for exploration
-	PlaceGenericRooms();
+	// 2. Carve Sector 1 Maze (West Column: X in [1..9], Y in [1..18])
+	// Carve two 3x3 pillared crypt chambers as branching decision hubs
+	CarveCryptChamber(2, 3, 3, 3);
+	CarveCryptChamber(5, 11, 3, 3);
+	FIntPoint S1Start(3, 3);
+	FIntPoint S1End(4, 18);
+	CarveSectorMaze(1, 9, 1, 18, S1Start, S1End);
+	// Dedicated 1-tile entrance approach to Boss 1 (no wide horizontal highway)
+	SetCell(4, 19, EDungeonCellType::Corridor);
+	SetCell(4, 20, EDungeonCellType::BossDoor_1_Enter);
 
-	// 3. Carve dense maze corridors via Recursive Backtracker
-	CarveMazeCorridors();
+	// 3. Connect Boss 1 Exit (8, 24) to Sector 2 start with stepped S-turn
+	SetCell(8, 24, EDungeonCellType::BossDoor_1_Exit);
+	SetCell(9, 24, EDungeonCellType::Corridor);
+	SetCell(9, 25, EDungeonCellType::Corridor);
+	SetCell(10, 25, EDungeonCellType::Corridor);
+	SetCell(10, 24, EDungeonCellType::Corridor);
+	SetCell(11, 24, EDungeonCellType::Corridor);
 
-	// 4. Connect rooms to the maze via doorways
-	ConnectRoomsToMaze();
+	// 4. Carve Sector 2 Maze (Center Column: X in [11..19], Y in [12..28])
+	CarveCryptChamber(12, 14, 3, 3);
+	CarveCryptChamber(15, 22, 3, 3);
+	FIntPoint S2Start(11, 24);
+	FIntPoint S2End(14, 12);
+	CarveSectorMaze(11, 19, 12, 28, S2Start, S2End);
+	// Dedicated 1-tile entrance approach to Boss 2
+	SetCell(14, 11, EDungeonCellType::Corridor);
+	SetCell(14, 10, EDungeonCellType::BossDoor_2_Enter);
 
-	// 5. Add loops and alternate routes
-	AddLoopConnections();
+	// 5. Connect Boss 2 Exit (18, 6) to Sector 3 start with stepped S-turn
+	SetCell(18, 6, EDungeonCellType::BossDoor_2_Exit);
+	SetCell(19, 6, EDungeonCellType::Corridor);
+	SetCell(19, 5, EDungeonCellType::Corridor);
+	SetCell(20, 5, EDungeonCellType::Corridor);
+	SetCell(20, 6, EDungeonCellType::Corridor);
+	SetCell(21, 6, EDungeonCellType::Corridor);
 
-	// 6. Validate full connectivity
-	return ValidateConnectivity();
+	// 6. Carve Sector 3 Maze (East Column: X in [21..29], Y in [1..18])
+	CarveCryptChamber(22, 3, 3, 3);
+	CarveCryptChamber(25, 11, 3, 3);
+	FIntPoint S3Start(21, 6);
+	FIntPoint S3End(24, 18);
+	CarveSectorMaze(21, 29, 1, 18, S3Start, S3End);
+	// Dedicated 1-tile entrance approach to Boss 3
+	SetCell(24, 19, EDungeonCellType::Corridor);
+	SetCell(24, 20, EDungeonCellType::BossDoor_3_Enter);
+
+	// 7. Add controlled dead-end loops (Only connecting dead-ends, preventing 2x2 room mergers)
+	AddSectorLoops(1, 9, 1, 18, 0.20f);
+	AddSectorLoops(11, 19, 12, 28, 0.20f);
+	AddSectorLoops(21, 29, 1, 18, 0.20f);
+
+	// Setup player spawn
+	PlayerSpawnLocation = GridToWorldCenter(3, 3, 100.0f);
+
+	// Compatibility aliases
+	JewelRoomLocation = Boss1RoomLocation;
+	JewelLocation = Boss1SpawnLocation;
+	BeastRoomLocation = Boss2RoomLocation;
+	BeastLocation = Boss2SpawnLocation;
+	ExitRoomLocation = Boss3RoomLocation;
+	ExitDoorLocation = Boss3ExitDoorLocation;
+
+	return true;
+}
+void ADungeonGenerator::BuildBossArenas()
+{
+	// Arena Dimensions: 7x7 tiles = 3500x3500 cm
+
+	// --- BOSS ROOM 1 (Stage 1 Finale, Top-Left) ---
+	FDungeonRoom R1;
+	R1.X = 1; R1.Y = 21; R1.Width = 7; R1.Height = 7;
+	R1.Type = EDungeonCellType::BossRoom_1;
+	for (int32 X = R1.X; X < R1.X + R1.Width; ++X)
+	{
+		for (int32 Y = R1.Y; Y < R1.Y + R1.Height; ++Y)
+		{
+			SetCell(X, Y, EDungeonCellType::BossRoom_1);
+		}
+	}
+	// Entrance (South wall) & Exit (East wall)
+	SetCell(4, 20, EDungeonCellType::BossDoor_1_Enter);
+	SetCell(8, 24, EDungeonCellType::BossDoor_1_Exit);
+
+	Boss1RoomIndex = Rooms.Add(R1);
+	Boss1RoomLocation = GridToWorldCenter(4, 24, 0.0f);
+	Boss1SpawnLocation = GridToWorldCenter(4, 24, 50.0f);
+	Boss1EntranceDoorLocation = GridToWorldCenter(4, 20, 0.0f);
+	Boss1ExitDoorLocation = GridToWorldCenter(8, 24, 0.0f);
+
+	// --- BOSS ROOM 2 (Stage 2 Finale, Bottom-Center) ---
+	FDungeonRoom R2;
+	R2.X = 11; R2.Y = 3; R2.Width = 7; R2.Height = 7;
+	R2.Type = EDungeonCellType::BossRoom_2;
+	for (int32 X = R2.X; X < R2.X + R2.Width; ++X)
+	{
+		for (int32 Y = R2.Y; Y < R2.Y + R2.Height; ++Y)
+		{
+			SetCell(X, Y, EDungeonCellType::BossRoom_2);
+		}
+	}
+	// Entrance (North wall) & Exit (East wall)
+	SetCell(14, 10, EDungeonCellType::BossDoor_2_Enter);
+	SetCell(18, 6, EDungeonCellType::BossDoor_2_Exit);
+
+	Boss2RoomIndex = Rooms.Add(R2);
+	Boss2RoomLocation = GridToWorldCenter(14, 6, 0.0f);
+	Boss2SpawnLocation = GridToWorldCenter(14, 6, 50.0f);
+	Boss2EntranceDoorLocation = GridToWorldCenter(14, 10, 0.0f);
+	Boss2ExitDoorLocation = GridToWorldCenter(18, 6, 0.0f);
+
+	// --- BOSS ROOM 3 (Stage 3 Grand Climax, Top-Right) ---
+	FDungeonRoom R3;
+	R3.X = 21; R3.Y = 21; R3.Width = 7; R3.Height = 7;
+	R3.Type = EDungeonCellType::BossRoom_3;
+	for (int32 X = R3.X; X < R3.X + R3.Width; ++X)
+	{
+		for (int32 Y = R3.Y; Y < R3.Y + R3.Height; ++Y)
+		{
+			SetCell(X, Y, EDungeonCellType::BossRoom_3);
+		}
+	}
+	// Entrance (South wall) & Final Exit Door (North wall, 3 boss relics required)
+	SetCell(24, 20, EDungeonCellType::BossDoor_3_Enter);
+	SetCell(24, 28, EDungeonCellType::BossDoor_3_Exit);
+
+	Boss3RoomIndex = Rooms.Add(R3);
+	Boss3RoomLocation = GridToWorldCenter(24, 24, 0.0f);
+	Boss3SpawnLocation = GridToWorldCenter(24, 24, 50.0f);
+	Boss3EntranceDoorLocation = GridToWorldCenter(24, 20, 0.0f);
+	Boss3ExitDoorLocation = GridToWorldCenter(24, 28, 0.0f);
 }
 
-void ADungeonGenerator::PlaceSpecialRooms()
+void ADungeonGenerator::CarveCryptChamber(int32 OriginX, int32 OriginY, int32 W, int32 H)
 {
-	// Subdivide grid into 3 distant regions for the 3 special rooms
-	// Jewel Room: Center / South region (e.g. Cols 12-18, Rows 5-11)
-	// Beast Room: West region (e.g. Cols 4-10, Rows 16-22)
-	// Exit Room:  North-East region (e.g. Cols 20-26, Rows 20-26)
-
-	auto TryPlaceSpecialRoom = [this](int32 MinX, int32 MaxX, int32 MinY, int32 MaxY, int32 RoomW, int32 RoomH, EDungeonCellType RoomType) -> int32
+	for (int32 X = OriginX; X < OriginX + W; ++X)
 	{
-		// Make sure width and height are odd or even-consistent
-		int32 BestX = -1;
-		int32 BestY = -1;
-
-		for (int32 Attempt = 0; Attempt < 20; ++Attempt)
+		for (int32 Y = OriginY; Y < OriginY + H; ++Y)
 		{
-			int32 RX = RandomStream.RandRange(MinX, FMath::Max(MinX, MaxX - RoomW));
-			int32 RY = RandomStream.RandRange(MinY, FMath::Max(MinY, MaxY - RoomH));
-
-			// Align room origins to odd coordinates for maze grid alignment
-			if (RX % 2 == 0) RX++;
-			if (RY % 2 == 0) RY++;
-
-			FDungeonRoom Candidate;
-			Candidate.X = RX;
-			Candidate.Y = RY;
-			Candidate.Width = RoomW;
-			Candidate.Height = RoomH;
-			Candidate.Type = RoomType;
-
-			bool bOverlap = false;
-			for (const FDungeonRoom& R : Rooms)
+			if (X >= 0 && X < GridSize && Y >= 0 && Y < GridSize)
 			{
-				if (Candidate.Overlaps(R, RoomPadding))
-				{
-					bOverlap = true;
-					break;
-				}
-			}
-
-			if (!bOverlap && (Candidate.X + Candidate.Width < GridSize - 1) && (Candidate.Y + Candidate.Height < GridSize - 1))
-			{
-				BestX = RX;
-				BestY = RY;
-				break;
-			}
-		}
-
-		if (BestX == -1)
-		{
-			BestX = FMath::Clamp(MinX, 1, GridSize - RoomW - 2);
-			BestY = FMath::Clamp(MinY, 1, GridSize - RoomH - 2);
-		}
-
-		FDungeonRoom Placed;
-		Placed.X = BestX;
-		Placed.Y = BestY;
-		Placed.Width = RoomW;
-		Placed.Height = RoomH;
-		Placed.Type = RoomType;
-
-		for (int32 X = Placed.X; X < Placed.X + Placed.Width; ++X)
-		{
-			for (int32 Y = Placed.Y; Y < Placed.Y + Placed.Height; ++Y)
-			{
-				SetCell(X, Y, RoomType);
-			}
-		}
-
-		return Rooms.Add(Placed);
-	};
-
-	// 1. Jewel Room (Size 4x4 or 5x5) in Center-South
-	int32 CenterMin = GridSize / 3;
-	int32 CenterMax = (GridSize * 2) / 3;
-	JewelRoomIndex = TryPlaceSpecialRoom(CenterMin, CenterMax, 3, GridSize / 2, 5, 5, EDungeonCellType::SpecialRoom_Jewel);
-
-	// 2. Beast Room (Size 4x4) in West
-	BeastRoomIndex = TryPlaceSpecialRoom(2, GridSize / 3, CenterMin, GridSize - 6, 4, 4, EDungeonCellType::SpecialRoom_Beast);
-
-	// 3. Exit Room (Size 4x4) in North-East
-	ExitRoomIndex = TryPlaceSpecialRoom(CenterMax, GridSize - 5, CenterMax, GridSize - 5, 4, 4, EDungeonCellType::SpecialRoom_Exit);
-
-	// Cache locations
-	if (Rooms.IsValidIndex(JewelRoomIndex))
-	{
-		FIntPoint C = Rooms[JewelRoomIndex].GetCenter();
-		JewelRoomLocation = GridToWorldCenter(C.X, C.Y, 0.0f);
-		JewelLocation = JewelRoomLocation + FVector(0.0f, 0.0f, 60.0f);
-		JewelBeastLocation = GridToWorldCenter(C.X + 1, C.Y, 0.0f);
-	}
-
-	if (Rooms.IsValidIndex(BeastRoomIndex))
-	{
-		FIntPoint C = Rooms[BeastRoomIndex].GetCenter();
-		BeastRoomLocation = GridToWorldCenter(C.X, C.Y, 0.0f);
-		BeastLocation = BeastRoomLocation + FVector(0.0f, 0.0f, 50.0f);
-	}
-
-	if (Rooms.IsValidIndex(ExitRoomIndex))
-	{
-		const FDungeonRoom& ExitRoom = Rooms[ExitRoomIndex];
-		FIntPoint C = ExitRoom.GetCenter();
-		ExitRoomLocation = GridToWorldCenter(C.X, C.Y, 0.0f);
-		ExitBeastLocation = GridToWorldCenter(C.X - 1, C.Y, 0.0f);
-		// Exit door on the North wall of the Exit Room
-		ExitDoorLocation = FVector((ExitRoom.X + ExitRoom.Width / 2) * TileSize, (ExitRoom.Y + ExitRoom.Height) * TileSize, 0.0f);
-	}
-}
-
-void ADungeonGenerator::PlaceGenericRooms()
-{
-	const int32 NumGenericRooms = RandomStream.RandRange(2, 4);
-
-	for (int32 i = 0; i < NumGenericRooms; ++i)
-	{
-		int32 RW = RandomStream.RandRange(MinRoomSize, MaxRoomSize);
-		int32 RH = RandomStream.RandRange(MinRoomSize, MaxRoomSize);
-
-		for (int32 Attempt = 0; Attempt < 15; ++Attempt)
-		{
-			int32 RX = RandomStream.RandRange(2, GridSize - RW - 3);
-			int32 RY = RandomStream.RandRange(2, GridSize - RH - 3);
-
-			if (RX % 2 == 0) RX++;
-			if (RY % 2 == 0) RY++;
-
-			FDungeonRoom Candidate;
-			Candidate.X = RX;
-			Candidate.Y = RY;
-			Candidate.Width = RW;
-			Candidate.Height = RH;
-			Candidate.Type = EDungeonCellType::Room;
-
-			bool bOverlap = false;
-			for (const FDungeonRoom& R : Rooms)
-			{
-				if (Candidate.Overlaps(R, RoomPadding))
-				{
-					bOverlap = true;
-					break;
-				}
-			}
-
-			if (!bOverlap && (Candidate.X + Candidate.Width < GridSize - 1) && (Candidate.Y + Candidate.Height < GridSize - 1))
-			{
-				for (int32 X = Candidate.X; X < Candidate.X + Candidate.Width; ++X)
-				{
-					for (int32 Y = Candidate.Y; Y < Candidate.Y + Candidate.Height; ++Y)
-					{
-						SetCell(X, Y, EDungeonCellType::Room);
-					}
-				}
-				Rooms.Add(Candidate);
-				break;
+				SetCell(X, Y, EDungeonCellType::Corridor);
 			}
 		}
 	}
 }
 
-void ADungeonGenerator::CarveMazeCorridors()
+void ADungeonGenerator::CarveSectorMaze(int32 MinX, int32 MaxX, int32 MinY, int32 MaxY, FIntPoint StartCell, FIntPoint EndCell)
 {
-	// Recursive Backtracker maze algorithm operating on odd grid coordinates with step size 2
+	int32 SX = StartCell.X;
+	int32 SY = StartCell.Y;
+	if (SX % 2 == 0) SX = FMath::Min(MaxX - 1, SX + 1);
+	if (SY % 2 == 0) SY = FMath::Min(MaxY - 1, SY + 1);
+
 	TArray<FIntPoint> Stack;
-
-	// Find an unvisited odd cell that is solid
-	auto FindUnvisitedCell = [this]() -> FIntPoint
+	if (GetCell(SX, SY) == EDungeonCellType::Solid)
 	{
-		TArray<FIntPoint> Candidates;
-		for (int32 X = 1; X < GridSize - 1; X += 2)
-		{
-			for (int32 Y = 1; Y < GridSize - 1; Y += 2)
-			{
-				if (GetCell(X, Y) == EDungeonCellType::Solid)
-				{
-					Candidates.Add(FIntPoint(X, Y));
-				}
-			}
-		}
-
-		if (Candidates.Num() > 0)
-		{
-			int32 Idx = RandomStream.RandRange(0, Candidates.Num() - 1);
-			return Candidates[Idx];
-		}
-		return FIntPoint(-1, -1);
-	};
+		SetCell(SX, SY, EDungeonCellType::Corridor);
+	}
+	Stack.Push(FIntPoint(SX, SY));
 
 	const FIntPoint Dirs[4] = { FIntPoint(0, 2), FIntPoint(0, -2), FIntPoint(2, 0), FIntPoint(-2, 0) };
+	int32 LastDir = -1;
+	int32 StraightSteps = 0;
 
-	FIntPoint StartCell = FindUnvisitedCell();
-	while (StartCell.X != -1)
+	while (Stack.Num() > 0)
 	{
-		SetCell(StartCell.X, StartCell.Y, EDungeonCellType::Corridor);
-		Stack.Push(StartCell);
+		FIntPoint Current = Stack.Top();
+		TArray<int32> ValidDirs;
 
-		while (Stack.Num() > 0)
+		for (int32 d = 0; d < 4; ++d)
 		{
-			FIntPoint Current = Stack.Top();
+			int32 NX = Current.X + Dirs[d].X;
+			int32 NY = Current.Y + Dirs[d].Y;
 
-			// Gather valid unvisited neighbors
-			TArray<int32> ValidDirs;
+			if (NX >= MinX && NX <= MaxX && NY >= MinY && NY <= MaxY)
+			{
+				if (GetCell(NX, NY) == EDungeonCellType::Solid)
+				{
+					// Avoid running straight for more than 1 step
+					if (d == LastDir && StraightSteps >= 1)
+					{
+						continue;
+					}
+					ValidDirs.Add(d);
+				}
+			}
+		}
+
+		// Fallback if no direction passed the straight limiter
+		if (ValidDirs.Num() == 0)
+		{
 			for (int32 d = 0; d < 4; ++d)
 			{
 				int32 NX = Current.X + Dirs[d].X;
 				int32 NY = Current.Y + Dirs[d].Y;
-
-				if (IsValidCell(NX, NY) && NX > 0 && NX < GridSize - 1 && NY > 0 && NY < GridSize - 1)
+				if (NX >= MinX && NX <= MaxX && NY >= MinY && NY <= MaxY && GetCell(NX, NY) == EDungeonCellType::Solid)
 				{
-					if (GetCell(NX, NY) == EDungeonCellType::Solid)
-					{
-						ValidDirs.Add(d);
-					}
+					ValidDirs.Add(d);
 				}
 			}
+		}
 
-			if (ValidDirs.Num() > 0)
+		if (ValidDirs.Num() > 0)
+		{
+			int32 Chosen = -1;
+			TArray<int32> TurnDirs;
+			for (int32 d : ValidDirs)
 			{
-				// Pick random direction
-				int32 ChosenDir = ValidDirs[RandomStream.RandRange(0, ValidDirs.Num() - 1)];
-				int32 NX = Current.X + Dirs[ChosenDir].X;
-				int32 NY = Current.Y + Dirs[ChosenDir].Y;
+				if (d != LastDir) TurnDirs.Add(d);
+			}
 
-				// Carve intermediate wall cell
-				int32 WallX = Current.X + Dirs[ChosenDir].X / 2;
-				int32 WallY = Current.Y + Dirs[ChosenDir].Y / 2;
-
-				SetCell(WallX, WallY, EDungeonCellType::Corridor);
-				SetCell(NX, NY, EDungeonCellType::Corridor);
-
-				Stack.Push(FIntPoint(NX, NY));
+			// 85% chance to TURN, forcing winding S-bends, zigzags, and corners
+			if (TurnDirs.Num() > 0 && (LastDir == -1 || RandomStream.FRand() < 0.85f))
+			{
+				Chosen = TurnDirs[RandomStream.RandRange(0, TurnDirs.Num() - 1)];
 			}
 			else
 			{
-				Stack.Pop();
+				Chosen = ValidDirs[RandomStream.RandRange(0, ValidDirs.Num() - 1)];
 			}
-		}
 
-		StartCell = FindUnvisitedCell();
-	}
-}
-
-void ADungeonGenerator::ConnectRoomsToMaze()
-{
-	// Connect each room to adjacent corridors by opening doorways
-	for (const FDungeonRoom& Room : Rooms)
-	{
-		TArray<FIntPoint> PotentialDoors;
-
-		// Check South wall (Y - 1)
-		for (int32 X = Room.X; X < Room.X + Room.Width; ++X)
-		{
-			if (IsValidCell(X, Room.Y - 2) && GetCell(X, Room.Y - 2) == EDungeonCellType::Corridor)
+			if (Chosen == LastDir)
 			{
-				PotentialDoors.Add(FIntPoint(X, Room.Y - 1));
+				StraightSteps++;
 			}
-		}
-
-		// Check North wall (Y + Height)
-		for (int32 X = Room.X; X < Room.X + Room.Width; ++X)
-		{
-			if (IsValidCell(X, Room.Y + Room.Height + 1) && GetCell(X, Room.Y + Room.Height + 1) == EDungeonCellType::Corridor)
+			else
 			{
-				PotentialDoors.Add(FIntPoint(X, Room.Y + Room.Height));
+				StraightSteps = 0;
 			}
-		}
 
-		// Check West wall (X - 1)
-		for (int32 Y = Room.Y; Y < Room.Y + Room.Height; ++Y)
-		{
-			if (IsValidCell(Room.X - 2, Y) && GetCell(Room.X - 2, Y) == EDungeonCellType::Corridor)
-			{
-				PotentialDoors.Add(FIntPoint(Room.X - 1, Y));
-			}
-		}
+			int32 MidX = Current.X + Dirs[Chosen].X / 2;
+			int32 MidY = Current.Y + Dirs[Chosen].Y / 2;
+			int32 NxtX = Current.X + Dirs[Chosen].X;
+			int32 NxtY = Current.Y + Dirs[Chosen].Y;
 
-		// Check East wall (X + Width)
-		for (int32 Y = Room.Y; Y < Room.Y + Room.Height; ++Y)
-		{
-			if (IsValidCell(Room.X + Room.Width + 1, Y) && GetCell(Room.X + Room.Width + 1, Y) == EDungeonCellType::Corridor)
-			{
-				PotentialDoors.Add(FIntPoint(Room.X + Room.Width, Y));
-			}
-		}
+			SetCell(MidX, MidY, EDungeonCellType::Corridor);
+			SetCell(NxtX, NxtY, EDungeonCellType::Corridor);
 
-		if (PotentialDoors.Num() > 0)
-		{
-			// Open 1 or 2 doors per room
-			int32 DoorsToOpen = FMath::Min(PotentialDoors.Num(), (Room.Width >= 4 || Room.Height >= 4) ? 2 : 1);
-			for (int32 d = 0; d < DoorsToOpen; ++d)
-			{
-				int32 PickIdx = RandomStream.RandRange(0, PotentialDoors.Num() - 1);
-				FIntPoint Door = PotentialDoors[PickIdx];
-				SetCell(Door.X, Door.Y, EDungeonCellType::Corridor);
-				PotentialDoors.RemoveAt(PickIdx);
-			}
+			LastDir = Chosen;
+			Stack.Push(FIntPoint(NxtX, NxtY));
 		}
 		else
 		{
-			// Fallback: forcefully tunnel 1 cell outwards towards center
-			FIntPoint C = Room.GetCenter();
-			int32 TargetX = FMath::Clamp(Room.X - 1, 1, GridSize - 2);
-			SetCell(TargetX, C.Y, EDungeonCellType::Corridor);
+			Stack.Pop();
+			LastDir = -1;
+			StraightSteps = 0;
 		}
 	}
+
+	ConnectPointToNearestCorridor(StartCell, MinX, MaxX, MinY, MaxY);
+	ConnectPointToNearestCorridor(EndCell, MinX, MaxX, MinY, MaxY);
 }
 
-void ADungeonGenerator::AddLoopConnections()
+void ADungeonGenerator::ConnectPointToNearestCorridor(FIntPoint Pt, int32 MinX, int32 MaxX, int32 MinY, int32 MaxY)
 {
-	// Iterate through internal walls and remove a fraction of them to create cycles/loops
-	for (int32 X = 2; X < GridSize - 2; ++X)
+	if (GetCell(Pt.X, Pt.Y) == EDungeonCellType::Corridor)
 	{
-		for (int32 Y = 2; Y < GridSize - 2; ++Y)
-		{
-			if (GetCell(X, Y) == EDungeonCellType::Solid)
-			{
-				bool bConnectsHoriz = IsWalkable(X - 1, Y) && IsWalkable(X + 1, Y) && !IsWalkable(X, Y - 1) && !IsWalkable(X, Y + 1);
-				bool bConnectsVert = IsWalkable(X, Y - 1) && IsWalkable(X, Y + 1) && !IsWalkable(X - 1, Y) && !IsWalkable(X + 1, Y);
-
-				if ((bConnectsHoriz || bConnectsVert) && RandomStream.FRand() < LoopProbability)
-				{
-					SetCell(X, Y, EDungeonCellType::Corridor);
-				}
-			}
-		}
-	}
-}
-
-bool ADungeonGenerator::ValidateConnectivity()
-{
-	// BFS reachability from any walkable cell
-	FIntPoint Start(-1, -1);
-	for (int32 X = 1; X < GridSize - 1; ++X)
-	{
-		for (int32 Y = 1; Y < GridSize - 1; ++Y)
-		{
-			if (GetCell(X, Y) == EDungeonCellType::Corridor)
-			{
-				Start = FIntPoint(X, Y);
-				break;
-			}
-		}
-		if (Start.X != -1) break;
+		return;
 	}
 
-	if (Start.X == -1) return false;
-
-	TArray<bool> Visited;
-	Visited.Init(false, GridSize * GridSize);
+	// BFS from Pt to find the nearest Corridor within [MinX..MaxX, MinY..MaxY]
 	TQueue<FIntPoint> Queue;
+	TMap<FIntPoint, FIntPoint> ParentMap;
+	TSet<FIntPoint> Visited;
 
-	Queue.Enqueue(Start);
-	Visited[GetGridIndex(Start.X, Start.Y)] = true;
+	Queue.Enqueue(Pt);
+	Visited.Add(Pt);
 
 	const FIntPoint Dirs[4] = { FIntPoint(0, 1), FIntPoint(0, -1), FIntPoint(1, 0), FIntPoint(-1, 0) };
+	TOptional<FIntPoint> Target;
 
 	while (!Queue.IsEmpty())
 	{
 		FIntPoint Curr;
 		Queue.Dequeue(Curr);
 
+		if (GetCell(Curr.X, Curr.Y) == EDungeonCellType::Corridor && Curr != Pt)
+		{
+			Target = Curr;
+			break;
+		}
+
 		for (int32 d = 0; d < 4; ++d)
 		{
-			int32 NX = Curr.X + Dirs[d].X;
-			int32 NY = Curr.Y + Dirs[d].Y;
-
-			if (IsValidCell(NX, NY) && IsWalkable(NX, NY))
+			FIntPoint Next = Curr + Dirs[d];
+			if (Next.X >= MinX && Next.X <= MaxX && Next.Y >= MinY && Next.Y <= MaxY && !Visited.Contains(Next))
 			{
-				int32 Idx = GetGridIndex(NX, NY);
-				if (!Visited[Idx])
-				{
-					Visited[Idx] = true;
-					Queue.Enqueue(FIntPoint(NX, NY));
-				}
+				Visited.Add(Next);
+				ParentMap.Add(Next, Curr);
+				Queue.Enqueue(Next);
 			}
 		}
 	}
 
-	// Verify all 3 special rooms are reached
-	auto IsRoomVisited = [&Visited, this](int32 RoomIdx) -> bool
+	if (Target.IsSet())
 	{
-		if (!Rooms.IsValidIndex(RoomIdx)) return false;
-		const FDungeonRoom& R = Rooms[RoomIdx];
-		FIntPoint C = R.GetCenter();
-		return Visited[GetGridIndex(C.X, C.Y)];
-	};
-
-	return IsRoomVisited(JewelRoomIndex) && IsRoomVisited(BeastRoomIndex) && IsRoomVisited(ExitRoomIndex);
+		FIntPoint Curr = Target.GetValue();
+		while (ParentMap.Contains(Curr))
+		{
+			if (GetCell(Curr.X, Curr.Y) == EDungeonCellType::Solid)
+			{
+				SetCell(Curr.X, Curr.Y, EDungeonCellType::Corridor);
+			}
+			Curr = ParentMap[Curr];
+		}
+		if (GetCell(Pt.X, Pt.Y) == EDungeonCellType::Solid)
+		{
+			SetCell(Pt.X, Pt.Y, EDungeonCellType::Corridor);
+		}
+	}
 }
 
+void ADungeonGenerator::AddSectorLoops(int32 MinX, int32 MaxX, int32 MinY, int32 MaxY, float LoopProb)
+{
+	const FIntPoint Dirs[4] = { FIntPoint(0, 1), FIntPoint(0, -1), FIntPoint(1, 0), FIntPoint(-1, 0) };
+
+	for (int32 X = MinX + 1; X < MaxX; ++X)
+	{
+		for (int32 Y = MinY + 1; Y < MaxY; ++Y)
+		{
+			if (GetCell(X, Y) == EDungeonCellType::Solid)
+			{
+				int32 CorrNeighbors = 0;
+				for (int32 d = 0; d < 4; ++d)
+				{
+					int32 NX = X + Dirs[d].X;
+					int32 NY = Y + Dirs[d].Y;
+					if (NX >= MinX && NX <= MaxX && NY >= MinY && NY <= MaxY && GetCell(NX, NY) == EDungeonCellType::Corridor)
+					{
+						CorrNeighbors++;
+					}
+				}
+
+				if (CorrNeighbors == 2 && RandomStream.FRand() < LoopProb)
+				{
+					// Ensure we don't merge walls into a 2x2 open room
+					bool bCreates2x2 = false;
+					for (int32 ox = -1; ox <= 0; ++ox)
+					{
+						for (int32 oy = -1; oy <= 0; ++oy)
+						{
+							int32 OpenCount = 0;
+							for (int32 cx = 0; cx <= 1; ++cx)
+							{
+								for (int32 cy = 0; cy <= 1; ++cy)
+								{
+									if (GetCell(X + ox + cx, Y + oy + cy) != EDungeonCellType::Solid || (ox + cx == 0 && oy + cy == 0))
+									{
+										OpenCount++;
+									}
+								}
+							}
+							if (OpenCount == 4)
+							{
+								bCreates2x2 = true;
+								break;
+							}
+						}
+						if (bCreates2x2) break;
+					}
+
+					if (!bCreates2x2)
+					{
+						SetCell(X, Y, EDungeonCellType::Corridor);
+					}
+				}
+			}
+		}
+	}
+}
 void ADungeonGenerator::BuildGeometryInstances()
 {
 	const float FTile = (float)TileSize;
 
-	// 1. Spawn Continuous Solid Stone Foundation Floor over ENTIRE grid (-1..GridSize)
-	// Completely prevents any white voids or gaps underneath walls, cupboards, or borders
+	// 1. Continuous Stone Floor (-1..GridSize)
 	if (FloorInstances)
 	{
 		for (int32 X = -1; X <= GridSize; ++X)
@@ -803,8 +758,7 @@ void ADungeonGenerator::BuildGeometryInstances()
 		}
 	}
 
-	// 1b. Spawn Continuous Solid Stone Ceiling and Roof Cover over the ENTIRE grid (walkable, solid, and 1-tile perimeter border)
-	// Completely seals the maze ceiling with zero gaps, holes, or exterior light leaks
+	// 2. Continuous Stone Ceiling & Roof (-1..GridSize)
 	for (int32 X = -1; X <= GridSize; ++X)
 	{
 		for (int32 Y = -1; Y <= GridSize; ++Y)
@@ -821,15 +775,13 @@ void ADungeonGenerator::BuildGeometryInstances()
 		}
 	}
 
-	// 2. Spawn Walls & Doorways
+	// 3. Spawn Walls
 	for (int32 X = 0; X < GridSize; ++X)
 	{
 		for (int32 Y = 0; Y < GridSize; ++Y)
 		{
 			if (IsWalkable(X, Y))
 			{
-				// Helper for placing wall instance with slight 1.01 scale in length to eliminate seams
-				// DecLoc & DecRot are specifically computed so decorative cupboards always face their stone arch & shelves INTO the corridor
 				auto PlaceWall = [this](FVector Loc, FRotator Rot, FVector DecLoc, FRotator DecRot, bool bCanBeDecorative)
 				{
 					bool bDecorative = bCanBeDecorative && (RandomStream.FRand() < DecorativeWallRatio) && DecorativeWallInstances;
@@ -838,13 +790,12 @@ void ADungeonGenerator::BuildGeometryInstances()
 						FTransform DecTransform(DecRot, DecLoc, FVector(1.01f, 1.0f, 1.0f));
 						DecorativeWallInstances->AddInstance(DecTransform);
 					}
-					else
+					else if (WallInstances)
 					{
 						FTransform WallTransform(Rot, Loc, FVector(1.01f, 1.0f, 1.0f));
 						WallInstances->AddInstance(WallTransform);
 					}
 
-					// Spawn continuous sculpted stone floor trim along the base of all walls facing the corridor
 					if (WallTrimInstances)
 					{
 						FTransform TrimTransform(Rot, Loc, FVector(1.01f, 1.0f, 1.0f));
@@ -852,7 +803,7 @@ void ADungeonGenerator::BuildGeometryInstances()
 					}
 				};
 
-				// South Edge (Y - 1): Corridor is at +Y (North). Cupboard must face North (DecRot = 0 deg)
+				// South Edge
 				if (!IsWalkable(X, Y - 1))
 				{
 					bool bStraight = (!IsWalkable(X - 1, Y - 1) && IsWalkable(X - 1, Y)) &&
@@ -864,7 +815,7 @@ void ADungeonGenerator::BuildGeometryInstances()
 					);
 				}
 
-				// North Edge (Y + 1): Corridor is at -Y (South). Cupboard must face South (DecRot = 180 deg)
+				// North Edge
 				if (!IsWalkable(X, Y + 1))
 				{
 					bool bStraight = (!IsWalkable(X - 1, Y + 1) && IsWalkable(X - 1, Y)) &&
@@ -876,25 +827,25 @@ void ADungeonGenerator::BuildGeometryInstances()
 					);
 				}
 
-				// West Edge (X - 1): Corridor is at +X (East). Cupboard must face East (DecRot = -90 deg)
+				// West Edge
 				if (!IsWalkable(X - 1, Y))
 				{
 					bool bStraight = (!IsWalkable(X - 1, Y - 1) && IsWalkable(X, Y - 1)) &&
 					                 (!IsWalkable(X - 1, Y + 1) && IsWalkable(X, Y + 1));
 					PlaceWall(
-						FVector(X * FTile, Y * FTile, 0.0f), FRotator(0.0f, -90.0f, 0.0f),
+						FVector(X * FTile, (Y + 1) * FTile, 0.0f), FRotator(0.0f, 90.0f, 0.0f),
 						FVector(X * FTile, Y * FTile, 0.0f), FRotator(0.0f, -90.0f, 0.0f),
 						bStraight
 					);
 				}
 
-				// East Edge (X + 1): Corridor is at -X (West). Cupboard must face West (DecRot = +90 deg)
+				// East Edge
 				if (!IsWalkable(X + 1, Y))
 				{
 					bool bStraight = (!IsWalkable(X + 1, Y - 1) && IsWalkable(X, Y - 1)) &&
 					                 (!IsWalkable(X + 1, Y + 1) && IsWalkable(X, Y + 1));
 					PlaceWall(
-						FVector((X + 1) * FTile, (Y + 1) * FTile, 0.0f), FRotator(0.0f, 90.0f, 0.0f),
+						FVector((X + 1) * FTile, Y * FTile, 0.0f), FRotator(0.0f, -90.0f, 0.0f),
 						FVector((X + 1) * FTile, (Y + 1) * FTile, 0.0f), FRotator(0.0f, 90.0f, 0.0f),
 						bStraight
 					);
@@ -903,11 +854,7 @@ void ADungeonGenerator::BuildGeometryInstances()
 		}
 	}
 
-	// 3. Place Corner Pillars at all Wall Junctions and Corners to seal gaps completely
 	PlaceWallPillars();
-
-	// 4. Spawn Doorway Frame at the Exit Door
-	DoorwayInstances->AddInstance(FTransform(FRotator(0.0f, 180.0f, 0.0f), ExitDoorLocation + FVector(TileSize * 0.5f, 0.0f, 0.0f), FVector(1.0f, 1.0f, 1.0f)));
 }
 
 void ADungeonGenerator::PlaceWallPillars()
@@ -915,83 +862,24 @@ void ADungeonGenerator::PlaceWallPillars()
 	const float FTile = (float)TileSize;
 	if (!PillarInstances) return;
 
-	TSet<FIntPoint> PlacedPillars;
+	// SM_Crypt_Pillar native mesh height is 330.84cm. WallHeight is 450cm.
+	// Scale Z so the pillar extends all the way from Z=0 to the roof/ceiling at Z=WallHeight + 2cm.
+	const float PillarScaleZ = (WallHeight + 2.0f) / 330.84f; // 1.366f
 
-	// Iterate all grid intersection vertices (X, Y) from 0 to GridSize
 	for (int32 X = 0; X <= GridSize; ++X)
 	{
 		for (int32 Y = 0; Y <= GridSize; ++Y)
 		{
-			// Check the 4 quadrants meeting at vertex (X, Y)
-			bool bNW = IsWalkable(X - 1, Y);
-			bool bNE = IsWalkable(X, Y);
-			bool bSW = IsWalkable(X - 1, Y - 1);
-			bool bSE = IsWalkable(X, Y - 1);
+			bool bTL = IsWalkable(X - 1, Y);
+			bool bTR = IsWalkable(X, Y);
+			bool bBL = IsWalkable(X - 1, Y - 1);
+			bool bBR = IsWalkable(X, Y - 1);
 
-			// Wall segment flags touching this vertex:
-			bool bWallWest = (bNW != bSW);
-			bool bWallEast = (bNE != bSE);
-			bool bWallNorth = (bNE != bNW);
-			bool bWallSouth = (bSE != bSW);
-
-			int32 WallCount = (bWallWest ? 1 : 0) + (bWallEast ? 1 : 0) +
-			                  (bWallNorth ? 1 : 0) + (bWallSouth ? 1 : 0);
-
-			if (WallCount == 0) continue;
-
-			// If at least one adjacent cell is walkable:
-			bool bHasWalkable = bNW || bNE || bSW || bSE;
-			if (!bHasWalkable) continue;
-
-			bool bNeedsPillar = false;
-
-			// Endpoint of a wall (dead-end wall)
-			if (WallCount == 1)
+			int32 WalkableCornerCount = (bTL ? 1 : 0) + (bTR ? 1 : 0) + (bBL ? 1 : 0) + (bBR ? 1 : 0);
+			if (WalkableCornerCount >= 1 && WalkableCornerCount <= 3)
 			{
-				bNeedsPillar = true;
-			}
-			// L-Corner: Two perpendicular walls meet
-			else if (WallCount == 2)
-			{
-				bool bCollinear = (bWallWest && bWallEast) || (bWallNorth && bWallSouth);
-				if (!bCollinear)
-				{
-					bNeedsPillar = true;
-				}
-			}
-			// T-Junction or Cross (3 or 4 walls meet)
-			else if (WallCount >= 3)
-			{
-				bNeedsPillar = true;
-			}
-
-			if (bNeedsPillar)
-			{
-				FIntPoint V(X, Y);
-				if (!PlacedPillars.Contains(V))
-				{
-					PlacedPillars.Add(V);
-					PillarInstances->AddInstance(FTransform(FRotator::ZeroRotator, FVector(X * FTile, Y * FTile, 0.0f), FVector(1.0f, 1.0f, 1.0f)));
-				}
-			}
-		}
-	}
-
-	// Also ensure all room corners have pillars
-	for (const FDungeonRoom& Room : Rooms)
-	{
-		TArray<FIntPoint> RoomCorners = {
-			FIntPoint(Room.X, Room.Y),
-			FIntPoint(Room.X + Room.Width, Room.Y),
-			FIntPoint(Room.X, Room.Y + Room.Height),
-			FIntPoint(Room.X + Room.Width, Room.Y + Room.Height)
-		};
-		for (const FIntPoint& Pt : RoomCorners)
-		{
-			if (!PlacedPillars.Contains(Pt))
-			{
-				PlacedPillars.Add(Pt);
-				PillarInstances->AddInstance(FTransform(FRotator::ZeroRotator, FVector(Pt.X * FTile, Pt.Y * FTile, 0.0f), FVector(1.0f, 1.0f, 1.0f)));
+				FVector PillarPos(X * FTile, Y * FTile, 0.0f);
+				PillarInstances->AddInstance(FTransform(FRotator::ZeroRotator, PillarPos, FVector(1.0f, 1.0f, PillarScaleZ)));
 			}
 		}
 	}
@@ -1001,152 +889,210 @@ void ADungeonGenerator::PlaceEnvironmentalProps()
 {
 	const float FTile = (float)TileSize;
 
-	// 1. Jewel Room: Central Altar / Pedestal for the Jewel & Flanking Statues
-	if (Rooms.IsValidIndex(JewelRoomIndex))
+	// 1. Fully illuminate all 3 Boss Rooms on ALL 4 SIDES with torches
+	for (const FDungeonRoom& Room : Rooms)
 	{
-		const FDungeonRoom& JR = Rooms[JewelRoomIndex];
-		FIntPoint C = JR.GetCenter();
-		FVector AltarPos = GridToWorldCenter(C.X, C.Y, 0.0f);
-		AltarInstances->AddInstance(FTransform(FRotator::ZeroRotator, AltarPos, FVector(1.2f, 1.2f, 1.2f)));
-		PropBlockedCells.Add(C);
-
-		// Two decorative statues flanking the altar
-		StatueInstances->AddInstance(FTransform(FRotator(0.0f, 90.0f, 0.0f), AltarPos + FVector(-150.0f, 0.0f, 0.0f), FVector(1.0f, 1.0f, 1.0f)));
-		StatueInstances->AddInstance(FTransform(FRotator(0.0f, -90.0f, 0.0f), AltarPos + FVector(150.0f, 0.0f, 0.0f), FVector(1.0f, 1.0f, 1.0f)));
-
-		// 4 Room Torches illuminating the Jewel Altar
-		SpawnTorchActor(FTransform(FRotator(0.0f, 0.0f, 0.0f), FVector(JR.X * FTile + FTile, JR.Y * FTile + 15.0f, 220.0f), FVector(1.0f, 1.0f, 1.0f)));
-		SpawnTorchActor(FTransform(FRotator(0.0f, 0.0f, 0.0f), FVector((JR.X + JR.Width - 1) * FTile, JR.Y * FTile + 15.0f, 220.0f), FVector(1.0f, 1.0f, 1.0f)));
-		SpawnTorchActor(FTransform(FRotator(0.0f, 180.0f, 0.0f), FVector(JR.X * FTile + FTile, (JR.Y + JR.Height) * FTile - 15.0f, 220.0f), FVector(1.0f, 1.0f, 1.0f)));
-		SpawnTorchActor(FTransform(FRotator(0.0f, 180.0f, 0.0f), FVector((JR.X + JR.Width - 1) * FTile, (JR.Y + JR.Height) * FTile - 15.0f, 220.0f), FVector(1.0f, 1.0f, 1.0f)));
+		PlaceBossRoomTorches(Room);
 	}
 
-	// 2. Beast Room: Sarcophagus / Coffin placed along back wall & Flanking Torches
-	if (Rooms.IsValidIndex(BeastRoomIndex))
+	// 2. Place arched doorway frames at all 6 entrance/exit doors
+	auto PlaceDoorway = [this, FTile](FVector DoorLoc, FRotator DoorRot)
 	{
-		const FDungeonRoom& BR = Rooms[BeastRoomIndex];
-		FVector CoffinPos = FVector((BR.X + BR.Width - 1) * FTile + FTile * 0.5f, (BR.Y + 1) * FTile + FTile * 0.5f, 0.0f);
-		CoffinInstances->AddInstance(FTransform(FRotator(0.0f, 90.0f, 0.0f), CoffinPos, FVector(1.0f, 1.0f, 1.0f)));
-		PropBlockedCells.Add(FIntPoint(BR.X + BR.Width - 1, BR.Y + 1));
+		if (DoorwayInstances)
+		{
+			DoorwayInstances->AddInstance(FTransform(DoorRot, DoorLoc, FVector(1.0f, 1.0f, 1.0f)));
+		}
+	};
 
-		// Torches illuminating the arena
-		SpawnTorchActor(FTransform(FRotator(0.0f, 0.0f, 0.0f), FVector(BR.X * FTile + FTile, BR.Y * FTile + 15.0f, 220.0f), FVector(1.0f, 1.0f, 1.0f)));
-		SpawnTorchActor(FTransform(FRotator(0.0f, 180.0f, 0.0f), FVector(BR.X * FTile + FTile, (BR.Y + BR.Height) * FTile - 15.0f, 220.0f), FVector(1.0f, 1.0f, 1.0f)));
+	// Boss 1 Entrance (South) & Exit (East)
+	PlaceDoorway(Boss1EntranceDoorLocation, FRotator(0.0f, 0.0f, 0.0f));
+	PlaceDoorway(Boss1ExitDoorLocation, FRotator(0.0f, 90.0f, 0.0f));
+
+	// Boss 2 Entrance (North) & Exit (East)
+	PlaceDoorway(Boss2EntranceDoorLocation, FRotator(0.0f, 180.0f, 0.0f));
+	PlaceDoorway(Boss2ExitDoorLocation, FRotator(0.0f, 90.0f, 0.0f));
+
+	// Boss 3 Entrance (South) & Final Exit Door (North)
+	PlaceDoorway(Boss3EntranceDoorLocation, FRotator(0.0f, 0.0f, 0.0f));
+	PlaceDoorway(Boss3ExitDoorLocation, FRotator(0.0f, 180.0f, 0.0f));
+
+	// 3. Boss Room 3 Final Altar / Relic Pedestals (for the 3 collected boss items)
+	if (AltarInstances)
+	{
+		FVector Altar1Pos = Boss3RoomLocation + FVector(-300.0f, 800.0f, 0.0f);
+		FVector Altar2Pos = Boss3RoomLocation + FVector(0.0f, 800.0f, 0.0f);
+		FVector Altar3Pos = Boss3RoomLocation + FVector(300.0f, 800.0f, 0.0f);
+
+		AltarInstances->AddInstance(FTransform(FRotator::ZeroRotator, Altar1Pos, FVector(0.8f, 0.8f, 0.8f)));
+		AltarInstances->AddInstance(FTransform(FRotator::ZeroRotator, Altar2Pos, FVector(1.0f, 1.0f, 1.0f)));
+		AltarInstances->AddInstance(FTransform(FRotator::ZeroRotator, Altar3Pos, FVector(0.8f, 0.8f, 0.8f)));
 	}
 
-	// 3. Exit Room: Flanking Statues and Torches by the Exit Door
-	StatueInstances->AddInstance(FTransform(FRotator(0.0f, 180.0f, 0.0f), ExitDoorLocation + FVector(-180.0f, -50.0f, 0.0f), FVector(1.0f, 1.0f, 1.0f)));
-	StatueInstances->AddInstance(FTransform(FRotator(0.0f, 180.0f, 0.0f), ExitDoorLocation + FVector(TileSize + 180.0f, -50.0f, 0.0f), FVector(1.0f, 1.0f, 1.0f)));
-
-	SpawnTorchActor(FTransform(FRotator(0.0f, 0.0f, 0.0f), ExitDoorLocation + FVector(-120.0f, 15.0f, 220.0f), FVector(1.0f, 1.0f, 1.0f)));
-	SpawnTorchActor(FTransform(FRotator(0.0f, 0.0f, 0.0f), ExitDoorLocation + FVector(TileSize + 120.0f, 15.0f, 220.0f), FVector(1.0f, 1.0f, 1.0f)));
-
-	// 4. Wall Torches along corridors and maze passages
+	// 4. Corridor Torches spaced along hallways for mood and navigation
 	int32 StepCounter = 0;
 	for (int32 X = 1; X < GridSize - 1; ++X)
 	{
 		for (int32 Y = 1; Y < GridSize - 1; ++Y)
 		{
-			if (IsWalkable(X, Y))
+			if (GetCell(X, Y) == EDungeonCellType::Corridor)
 			{
 				StepCounter++;
 				if (StepCounter % TorchInterval == 0)
 				{
-					// Check for an adjacent wall to mount the torch with correct inward facing rotations
-					// North Wall (Y + 1 is solid): corridor is -Y, torch faces -Y (Yaw = 180)
-					if (!IsWalkable(X, Y + 1))
+					if (!IsWalkable(X, Y - 1))
 					{
-						FVector TorchPos(X * FTile + FTile * 0.5f, (Y + 1) * FTile - 15.0f, 220.0f);
-						SpawnTorchActor(FTransform(FRotator(0.0f, 180.0f, 0.0f), TorchPos, FVector(1.0f, 1.0f, 1.0f)));
+						SpawnTorchActor(FTransform(FRotator(0.0f, 0.0f, 0.0f), FVector((X + 0.5f) * FTile, Y * FTile + 15.0f, 220.0f), FVector::OneVector));
 					}
-					// South Wall (Y - 1 is solid): corridor is +Y, torch faces +Y (Yaw = 0)
-					else if (!IsWalkable(X, Y - 1))
+					else if (!IsWalkable(X, Y + 1))
 					{
-						FVector TorchPos(X * FTile + FTile * 0.5f, Y * FTile + 15.0f, 220.0f);
-						SpawnTorchActor(FTransform(FRotator(0.0f, 0.0f, 0.0f), TorchPos, FVector(1.0f, 1.0f, 1.0f)));
+						SpawnTorchActor(FTransform(FRotator(0.0f, 180.0f, 0.0f), FVector((X + 0.5f) * FTile, (Y + 1) * FTile - 15.0f, 220.0f), FVector::OneVector));
 					}
-					// West Wall (X - 1 is solid): corridor is +X, torch faces +X (Yaw = -90)
-					else if (!IsWalkable(X - 1, Y))
-					{
-						FVector TorchPos(X * FTile + 15.0f, Y * FTile + FTile * 0.5f, 220.0f);
-						SpawnTorchActor(FTransform(FRotator(0.0f, -90.0f, 0.0f), TorchPos, FVector(1.0f, 1.0f, 1.0f)));
-					}
-					// East Wall (X + 1 is solid): corridor is -X, torch faces -X (Yaw = 90)
-					else if (!IsWalkable(X + 1, Y))
-					{
-						FVector TorchPos((X + 1) * FTile - 15.0f, Y * FTile + FTile * 0.5f, 220.0f);
-						SpawnTorchActor(FTransform(FRotator(0.0f, 90.0f, 0.0f), TorchPos, FVector(1.0f, 1.0f, 1.0f)));
-					}
-				}
-
-				// Occasional decorative pots in dead ends or corridor corners
-				int32 WallCount = (!IsWalkable(X + 1, Y) ? 1 : 0) + (!IsWalkable(X - 1, Y) ? 1 : 0) +
-				                  (!IsWalkable(X, Y + 1) ? 1 : 0) + (!IsWalkable(X, Y - 1) ? 1 : 0);
-				if (WallCount >= 3 && RandomStream.FRand() < 0.4f)
-				{
-					FVector PotPos = GridToWorldCenter(X, Y, 0.0f) + FVector(120.0f, 120.0f, 0.0f);
-					PotInstances->AddInstance(FTransform(FRotator(0.0f, RandomStream.RandRange(0, 360), 0.0f), PotPos, FVector(0.9f, 0.9f, 0.9f)));
-					PropBlockedCells.Add(FIntPoint(X, Y));
 				}
 			}
 		}
 	}
 }
 
+void ADungeonGenerator::PlaceBossRoomTorches(const FDungeonRoom& Room)
+{
+	const float FTile = (float)TileSize;
+
+	// South Wall (facing North into room)
+	for (int32 X = Room.X + 1; X < Room.X + Room.Width - 1; X += 2)
+	{
+		FVector Pos((X + 0.5f) * FTile, Room.Y * FTile + 15.0f, 220.0f);
+		SpawnTorchActor(FTransform(FRotator(0.0f, 0.0f, 0.0f), Pos, FVector::OneVector));
+	}
+
+	// North Wall (facing South into room)
+	for (int32 X = Room.X + 1; X < Room.X + Room.Width - 1; X += 2)
+	{
+		FVector Pos((X + 0.5f) * FTile, (Room.Y + Room.Height) * FTile - 15.0f, 220.0f);
+		SpawnTorchActor(FTransform(FRotator(0.0f, 180.0f, 0.0f), Pos, FVector::OneVector));
+	}
+
+	// West Wall (facing East into room)
+	for (int32 Y = Room.Y + 1; Y < Room.Y + Room.Height - 1; Y += 2)
+	{
+		FVector Pos(Room.X * FTile + 15.0f, (Y + 0.5f) * FTile, 220.0f);
+		SpawnTorchActor(FTransform(FRotator(0.0f, 90.0f, 0.0f), Pos, FVector::OneVector));
+	}
+
+	// East Wall (facing West into room)
+	for (int32 Y = Room.Y + 1; Y < Room.Y + Room.Height - 1; Y += 2)
+	{
+		FVector Pos((Room.X + Room.Width) * FTile - 15.0f, (Y + 0.5f) * FTile, 220.0f);
+		SpawnTorchActor(FTransform(FRotator(0.0f, -90.0f, 0.0f), Pos, FVector::OneVector));
+	}
+}
+
 bool ADungeonGenerator::SelectAndSetPlayerSpawn()
 {
-	// Build list of valid walkable corridor cells
-	TArray<FIntPoint> ValidSpawns;
+	PlayerSpawnLocation = GridToWorldCenter(3, 3, 100.0f);
+	return true;
+}
 
-	for (int32 X = 1; X < GridSize - 1; ++X)
+void ADungeonGenerator::BakeToStaticMeshActors()
+{
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	ClearBakedActors();
+
+	auto SpawnActorsFromISM = [this, World](UInstancedStaticMeshComponent* ISM, TSoftObjectPtr<UStaticMesh>& SoftMesh, const FName& FolderName, const FString& LabelPrefix)
 	{
-		for (int32 Y = 1; Y < GridSize - 1; ++Y)
+		if (!ISM) return;
+		UStaticMesh* Mesh = SoftMesh.Get();
+		if (!Mesh)
 		{
-			// Must be a Corridor cell (not inside any room)
-			if (GetCell(X, Y) != EDungeonCellType::Corridor)
-			{
-				continue;
-			}
+			Mesh = SoftMesh.LoadSynchronous();
+		}
+		if (!Mesh) return;
 
-			// Not blocked by props
-			if (PropBlockedCells.Contains(FIntPoint(X, Y)))
-			{
-				continue;
-			}
+		const int32 Count = ISM->GetInstanceCount();
+		for (int32 i = 0; i < Count; ++i)
+		{
+			FTransform InstanceTransform;
+			ISM->GetInstanceTransform(i, InstanceTransform, true);
 
-			// Ensure distance from Special Rooms
-			bool bTooClose = false;
-			const int32 MinDistanceToSpecialRoom = 5;
+			FActorSpawnParameters SpawnParams;
+			SpawnParams.Owner = nullptr;
+			SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
-			for (int32 RIdx : { JewelRoomIndex, BeastRoomIndex, ExitRoomIndex })
+			AStaticMeshActor* SMActor = World->SpawnActor<AStaticMeshActor>(AStaticMeshActor::StaticClass(), InstanceTransform, SpawnParams);
+			if (SMActor)
 			{
-				if (Rooms.IsValidIndex(RIdx))
+				UStaticMeshComponent* SMC = SMActor->GetStaticMeshComponent();
+				if (SMC)
 				{
-					FIntPoint C = Rooms[RIdx].GetCenter();
-					int32 Dist = FMath::Abs(X - C.X) + FMath::Abs(Y - C.Y);
-					if (Dist < MinDistanceToSpecialRoom)
-					{
-						bTooClose = true;
-						break;
-					}
+					SMC->SetStaticMesh(Mesh);
+					SMC->SetMobility(EComponentMobility::Static);
+					SMC->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+					SMC->SetCollisionObjectType(ECC_WorldStatic);
+					SMC->SetCollisionResponseToAllChannels(ECR_Block);
 				}
+#if WITH_EDITOR
+				SMActor->SetFolderPath(FolderName);
+				SMActor->SetActorLabel(FString::Printf(TEXT("%s_%d"), *LabelPrefix, i + 1));
+#endif
+				BakedActors.Add(SMActor);
 			}
+		}
+		ISM->ClearInstances();
+	};
 
-			if (!bTooClose)
+	// Pillars
+	SpawnActorsFromISM(PillarInstances, PillarMesh, FName(TEXT("Dungeon_Pillars")), TEXT("Pillar"));
+
+	// Walls
+	SpawnActorsFromISM(WallInstances, WallMesh, FName(TEXT("Dungeon_Walls")), TEXT("Wall"));
+	SpawnActorsFromISM(DecorativeWallInstances, DecorativeWallMesh, FName(TEXT("Dungeon_Walls")), TEXT("Wall_Decorative"));
+
+	// Doorways
+	SpawnActorsFromISM(DoorwayInstances, DoorwayMesh, FName(TEXT("Dungeon_Doors")), TEXT("Doorway"));
+
+	// Props
+	SpawnActorsFromISM(AltarInstances, AltarMesh, FName(TEXT("Dungeon_Props")), TEXT("Altar"));
+	SpawnActorsFromISM(CoffinInstances, CoffinMesh, FName(TEXT("Dungeon_Props")), TEXT("Coffin"));
+	SpawnActorsFromISM(PotInstances, PotMesh, FName(TEXT("Dungeon_Props")), TEXT("Pot"));
+	SpawnActorsFromISM(StatueInstances, StatueMesh, FName(TEXT("Dungeon_Props")), TEXT("Statue"));
+
+	UE_LOG(LogTemp, Log, TEXT("DungeonGenerator: Successfully baked %d static mesh actors into individual objects!"), BakedActors.Num());
+}
+
+void ADungeonGenerator::ClearBakedActors()
+{
+	for (TWeakObjectPtr<AActor>& ActorPtr : BakedActors)
+	{
+		if (ActorPtr.IsValid())
+		{
+			ActorPtr->Destroy();
+		}
+	}
+	BakedActors.Empty();
+
+	UWorld* World = GetWorld();
+	if (World && !World->IsGameWorld())
+	{
+		TArray<AActor*> AllActors;
+		UGameplayStatics::GetAllActorsOfClass(World, AStaticMeshActor::StaticClass(), AllActors);
+		for (AActor* Actor : AllActors)
+		{
+			if (IsValid(Actor))
 			{
-				ValidSpawns.Add(FIntPoint(X, Y));
+#if WITH_EDITOR
+				FName Folder = Actor->GetFolderPath();
+				if (Folder == FName(TEXT("Dungeon_Pillars")) ||
+					Folder == FName(TEXT("Dungeon_Walls")) ||
+					Folder == FName(TEXT("Dungeon_Doors")) ||
+					Folder == FName(TEXT("Dungeon_Floors")) ||
+					Folder == FName(TEXT("Dungeon_Ceilings")) ||
+					Folder == FName(TEXT("Dungeon_Props")))
+				{
+					World->DestroyActor(Actor, false, false);
+				}
+#endif
 			}
 		}
 	}
-
-	if (ValidSpawns.Num() == 0)
-	{
-		return false;
-	}
-
-	int32 PickIdx = RandomStream.RandRange(0, ValidSpawns.Num() - 1);
-	FIntPoint SpawnCell = ValidSpawns[PickIdx];
-
-	PlayerSpawnLocation = GridToWorldCenter(SpawnCell.X, SpawnCell.Y, 100.0f);
-	return true;
 }
