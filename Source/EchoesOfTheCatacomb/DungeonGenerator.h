@@ -1,4 +1,3 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
@@ -359,6 +358,10 @@ protected:
 	void ClearSpawnedTorches();
 	void SpawnTorchActor(const FTransform& Transform);
 	bool SelectAndSetPlayerSpawn();
+
+	bool IsNearDoorway(const FVector& Location, float Threshold = 500.0f) const;
+	bool IsNearPropOrAltar(const FVector& Location, float Threshold = 500.0f) const;
+	bool IsInsidePlayableMaze(int32 X, int32 Y) const;
 
 	// Grid Helper Methods
 	FORCEINLINE int32 GetGridIndex(int32 X, int32 Y) const

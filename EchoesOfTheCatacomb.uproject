@@ -55,5 +55,15 @@
                         "Name":  "Terminal",
                         "Enabled":  true
                     }
-                ]
+                ],
+    "TargetPlatforms":  [
+
+                        ],
+    "AdditionalRootDirectories":  [
+
+                                  ],
+    "AdditionalPluginDirectories":  [
+
+                                    ],
+    "EpicSampleNameHash":  ""
 }

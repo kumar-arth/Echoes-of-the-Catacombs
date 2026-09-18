@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+
 
 #include "DungeonGenerator.h"
 #include "Engine/World.h"
@@ -150,17 +150,22 @@ void ADungeonGenerator::EnsureMeshesLoaded()
 {
 	auto AssignMesh = [](UInstancedStaticMeshComponent* Comp, TSoftObjectPtr<UStaticMesh>& SoftMesh)
 	{
-		if (Comp && SoftMesh.IsValid())
+		if (Comp)
 		{
-			UStaticMesh* Loaded = SoftMesh.Get();
-			if (!Loaded)
+			if (SoftMesh.IsValid())
 			{
-				Loaded = SoftMesh.LoadSynchronous();
+				UStaticMesh* Loaded = SoftMesh.Get();
+				if (!Loaded)
+				{
+					Loaded = SoftMesh.LoadSynchronous();
+				}
+				if (Loaded)
+				{
+					Comp->SetStaticMesh(Loaded);
+				}
 			}
-			if (Loaded)
-			{
-				Comp->SetStaticMesh(Loaded);
-			}
+			Comp->SetVisibility(true);
+			Comp->SetHiddenInGame(false);
 		}
 	};
 
@@ -309,9 +314,16 @@ void ADungeonGenerator::ClearSpawnedTorches()
 			bool bIsTorch = Actor->ActorHasTag(TEXT("DungeonTorch")) ||
 			                (TorchBlueprintClass && Actor->IsA(TorchBlueprintClass));
 #if WITH_EDITOR
-			if (!bIsTorch && Actor->GetFolderPath() == FName(TEXT("Dungeon_Torches")))
+			if (!bIsTorch)
 			{
-				bIsTorch = true;
+				FName Folder = Actor->GetFolderPath();
+				FString Label = Actor->GetActorLabel();
+				if (Folder == FName(TEXT("Dungeon_Torches")) ||
+					Label.StartsWith(TEXT("Torch_")) ||
+					Label.StartsWith(TEXT("BP_Torch")))
+				{
+					bIsTorch = true;
+				}
 			}
 #endif
 			if (bIsTorch)
@@ -782,8 +794,33 @@ void ADungeonGenerator::BuildGeometryInstances()
 		{
 			if (IsWalkable(X, Y))
 			{
-				auto PlaceWall = [this](FVector Loc, FRotator Rot, FVector DecLoc, FRotator DecRot, bool bCanBeDecorative)
+				auto PlaceWall = [this, X, Y](FVector Loc, FRotator Rot, FVector DecLoc, FRotator DecRot, bool bCanBeDecorative)
 				{
+					// Never make a wall decorative (cupboard) if near doorways or altars
+					if (IsNearDoorway(Loc, 400.0f) || IsNearPropOrAltar(Loc, 400.0f))
+					{
+						bCanBeDecorative = false;
+					}
+
+					// Corridors keep clean plain stone walls
+					if (GetCell(X, Y) == EDungeonCellType::Corridor)
+					{
+						bCanBeDecorative = false;
+					}
+
+					// Wall intervals in boss rooms where torches mount must be plain flat stone
+					for (const FDungeonRoom& Room : Rooms)
+					{
+						if (X >= Room.X && X < Room.X + Room.Width && Y >= Room.Y && Y < Room.Y + Room.Height)
+						{
+							if ((X - Room.X) % 2 == 1 || (Y - Room.Y) % 2 == 1)
+							{
+								bCanBeDecorative = false;
+							}
+							break;
+						}
+					}
+
 					bool bDecorative = bCanBeDecorative && (RandomStream.FRand() < DecorativeWallRatio) && DecorativeWallInstances;
 					if (bDecorative)
 					{
@@ -864,7 +901,7 @@ void ADungeonGenerator::PlaceWallPillars()
 
 	// SM_Crypt_Pillar native mesh height is 330.84cm. WallHeight is 450cm.
 	// Scale Z so the pillar extends all the way from Z=0 to the roof/ceiling at Z=WallHeight + 2cm.
-	const float PillarScaleZ = (WallHeight + 2.0f) / 330.84f; // 1.366f
+	const float PillarScaleZ = (WallHeight + 5.0f) / 330.84f; // 1.3753f (flush with ceiling)
 
 	for (int32 X = 0; X <= GridSize; ++X)
 	{
@@ -928,24 +965,52 @@ void ADungeonGenerator::PlaceEnvironmentalProps()
 		AltarInstances->AddInstance(FTransform(FRotator::ZeroRotator, Altar3Pos, FVector(0.8f, 0.8f, 0.8f)));
 	}
 
-	// 4. Corridor Torches spaced along hallways for mood and navigation
+	// 4. Corridor Torches spaced along hallways strictly inside the playable maze
 	int32 StepCounter = 0;
 	for (int32 X = 1; X < GridSize - 1; ++X)
 	{
 		for (int32 Y = 1; Y < GridSize - 1; ++Y)
 		{
-			if (GetCell(X, Y) == EDungeonCellType::Corridor)
+			if (GetCell(X, Y) == EDungeonCellType::Corridor && IsInsidePlayableMaze(X, Y))
 			{
 				StepCounter++;
 				if (StepCounter % TorchInterval == 0)
 				{
-					if (!IsWalkable(X, Y - 1))
+					// South Edge: wall mesh between (X, Y) and (X, Y - 1)
+					if (GetCell(X, Y - 1) == EDungeonCellType::Solid)
 					{
-						SpawnTorchActor(FTransform(FRotator(0.0f, 0.0f, 0.0f), FVector((X + 0.5f) * FTile, Y * FTile + 15.0f, 220.0f), FVector::OneVector));
+						FVector Pos((X + 0.5f) * FTile, Y * FTile + 6.5f, 220.0f);
+						if (!IsNearDoorway(Pos, 500.0f) && !IsNearPropOrAltar(Pos, 400.0f))
+						{
+							SpawnTorchActor(FTransform(FRotator(0.0f, 0.0f, 0.0f), Pos, FVector::OneVector));
+						}
 					}
-					else if (!IsWalkable(X, Y + 1))
+					// North Edge: wall mesh between (X, Y) and (X, Y + 1)
+					else if (GetCell(X, Y + 1) == EDungeonCellType::Solid)
 					{
-						SpawnTorchActor(FTransform(FRotator(0.0f, 180.0f, 0.0f), FVector((X + 0.5f) * FTile, (Y + 1) * FTile - 15.0f, 220.0f), FVector::OneVector));
+						FVector Pos((X + 0.5f) * FTile, (Y + 1) * FTile - 6.5f, 220.0f);
+						if (!IsNearDoorway(Pos, 500.0f) && !IsNearPropOrAltar(Pos, 400.0f))
+						{
+							SpawnTorchActor(FTransform(FRotator(0.0f, 180.0f, 0.0f), Pos, FVector::OneVector));
+						}
+					}
+					// West Edge: wall mesh between (X, Y) and (X - 1, Y)
+					else if (GetCell(X - 1, Y) == EDungeonCellType::Solid)
+					{
+						FVector Pos(X * FTile + 6.5f, (Y + 0.5f) * FTile, 220.0f);
+						if (!IsNearDoorway(Pos, 500.0f) && !IsNearPropOrAltar(Pos, 400.0f))
+						{
+							SpawnTorchActor(FTransform(FRotator(0.0f, -90.0f, 0.0f), Pos, FVector::OneVector));
+						}
+					}
+					// East Edge: wall mesh between (X, Y) and (X + 1, Y)
+					else if (GetCell(X + 1, Y) == EDungeonCellType::Solid)
+					{
+						FVector Pos((X + 1) * FTile - 6.5f, (Y + 0.5f) * FTile, 220.0f);
+						if (!IsNearDoorway(Pos, 500.0f) && !IsNearPropOrAltar(Pos, 400.0f))
+						{
+							SpawnTorchActor(FTransform(FRotator(0.0f, 90.0f, 0.0f), Pos, FVector::OneVector));
+						}
 					}
 				}
 			}
@@ -957,32 +1022,40 @@ void ADungeonGenerator::PlaceBossRoomTorches(const FDungeonRoom& Room)
 {
 	const float FTile = (float)TileSize;
 
-	// South Wall (facing North into room)
+	// South Wall (facing North into room, Yaw = 0.0f)
 	for (int32 X = Room.X + 1; X < Room.X + Room.Width - 1; X += 2)
 	{
-		FVector Pos((X + 0.5f) * FTile, Room.Y * FTile + 15.0f, 220.0f);
+		if (GetCell(X, Room.Y - 1) != EDungeonCellType::Solid) continue;
+		FVector Pos((X + 0.5f) * FTile, Room.Y * FTile + 6.5f, 220.0f);
+		if (IsNearDoorway(Pos, 500.0f) || IsNearPropOrAltar(Pos, 400.0f)) continue;
 		SpawnTorchActor(FTransform(FRotator(0.0f, 0.0f, 0.0f), Pos, FVector::OneVector));
 	}
 
-	// North Wall (facing South into room)
+	// North Wall (facing South into room, Yaw = 180.0f)
 	for (int32 X = Room.X + 1; X < Room.X + Room.Width - 1; X += 2)
 	{
-		FVector Pos((X + 0.5f) * FTile, (Room.Y + Room.Height) * FTile - 15.0f, 220.0f);
+		if (GetCell(X, Room.Y + Room.Height) != EDungeonCellType::Solid) continue;
+		FVector Pos((X + 0.5f) * FTile, (Room.Y + Room.Height) * FTile - 6.5f, 220.0f);
+		if (IsNearDoorway(Pos, 500.0f) || IsNearPropOrAltar(Pos, 400.0f)) continue;
 		SpawnTorchActor(FTransform(FRotator(0.0f, 180.0f, 0.0f), Pos, FVector::OneVector));
 	}
 
-	// West Wall (facing East into room)
+	// West Wall (facing East into room, Yaw = -90.0f)
 	for (int32 Y = Room.Y + 1; Y < Room.Y + Room.Height - 1; Y += 2)
 	{
-		FVector Pos(Room.X * FTile + 15.0f, (Y + 0.5f) * FTile, 220.0f);
-		SpawnTorchActor(FTransform(FRotator(0.0f, 90.0f, 0.0f), Pos, FVector::OneVector));
+		if (GetCell(Room.X - 1, Y) != EDungeonCellType::Solid) continue;
+		FVector Pos(Room.X * FTile + 6.5f, (Y + 0.5f) * FTile, 220.0f);
+		if (IsNearDoorway(Pos, 500.0f) || IsNearPropOrAltar(Pos, 400.0f)) continue;
+		SpawnTorchActor(FTransform(FRotator(0.0f, -90.0f, 0.0f), Pos, FVector::OneVector));
 	}
 
-	// East Wall (facing West into room)
+	// East Wall (facing West into room, Yaw = 90.0f)
 	for (int32 Y = Room.Y + 1; Y < Room.Y + Room.Height - 1; Y += 2)
 	{
-		FVector Pos((Room.X + Room.Width) * FTile - 15.0f, (Y + 0.5f) * FTile, 220.0f);
-		SpawnTorchActor(FTransform(FRotator(0.0f, -90.0f, 0.0f), Pos, FVector::OneVector));
+		if (GetCell(Room.X + Room.Width, Y) != EDungeonCellType::Solid) continue;
+		FVector Pos((Room.X + Room.Width) * FTile - 6.5f, (Y + 0.5f) * FTile, 220.0f);
+		if (IsNearDoorway(Pos, 500.0f) || IsNearPropOrAltar(Pos, 400.0f)) continue;
+		SpawnTorchActor(FTransform(FRotator(0.0f, 90.0f, 0.0f), Pos, FVector::OneVector));
 	}
 }
 
@@ -990,6 +1063,52 @@ bool ADungeonGenerator::SelectAndSetPlayerSpawn()
 {
 	PlayerSpawnLocation = GridToWorldCenter(3, 3, 100.0f);
 	return true;
+}
+
+bool ADungeonGenerator::IsNearDoorway(const FVector& Location, float Threshold) const
+{
+	const float ThreshSq = Threshold * Threshold;
+	if (FVector::DistSquared2D(Location, Boss1EntranceDoorLocation) < ThreshSq) return true;
+	if (FVector::DistSquared2D(Location, Boss1ExitDoorLocation) < ThreshSq) return true;
+	if (FVector::DistSquared2D(Location, Boss2EntranceDoorLocation) < ThreshSq) return true;
+	if (FVector::DistSquared2D(Location, Boss2ExitDoorLocation) < ThreshSq) return true;
+	if (FVector::DistSquared2D(Location, Boss3EntranceDoorLocation) < ThreshSq) return true;
+	if (FVector::DistSquared2D(Location, Boss3ExitDoorLocation) < ThreshSq) return true;
+	return false;
+}
+
+bool ADungeonGenerator::IsNearPropOrAltar(const FVector& Location, float Threshold) const
+{
+	const float ThreshSq = Threshold * Threshold;
+	FVector Altar1Pos = Boss3RoomLocation + FVector(-300.0f, 800.0f, 0.0f);
+	FVector Altar2Pos = Boss3RoomLocation + FVector(0.0f, 800.0f, 0.0f);
+	FVector Altar3Pos = Boss3RoomLocation + FVector(300.0f, 800.0f, 0.0f);
+
+	if (FVector::DistSquared2D(Location, Altar1Pos) < ThreshSq) return true;
+	if (FVector::DistSquared2D(Location, Altar2Pos) < ThreshSq) return true;
+	if (FVector::DistSquared2D(Location, Altar3Pos) < ThreshSq) return true;
+	return false;
+}
+
+bool ADungeonGenerator::IsInsidePlayableMaze(int32 X, int32 Y) const
+{
+	// Sector 1: West Column (X in [1..9], Y in [1..18])
+	if (X >= 1 && X <= 9 && Y >= 1 && Y <= 18) return true;
+
+	// Sector 2: Center Column (X in [11..19], Y in [12..28])
+	if (X >= 11 && X <= 19 && Y >= 12 && Y <= 28) return true;
+
+	// Sector 3: East Column (X in [21..29], Y in [1..18])
+	if (X >= 21 && X <= 29 && Y >= 1 && Y <= 18) return true;
+
+	// Inter-sector connecting corridors
+	if (X >= 8 && X <= 11 && Y >= 24 && Y <= 25) return true;
+	if (X >= 18 && X <= 21 && Y >= 5 && Y <= 6) return true;
+	if (X == 4 && (Y == 19 || Y == 20)) return true;
+	if (X == 14 && (Y == 10 || Y == 11)) return true;
+	if (X == 24 && (Y == 19 || Y == 20)) return true;
+
+	return false;
 }
 
 void ADungeonGenerator::BakeToStaticMeshActors()
@@ -1078,16 +1197,25 @@ void ADungeonGenerator::ClearBakedActors()
 		UGameplayStatics::GetAllActorsOfClass(World, AStaticMeshActor::StaticClass(), AllActors);
 		for (AActor* Actor : AllActors)
 		{
-			if (IsValid(Actor))
+			if (IsValid(Actor) && Actor != this)
 			{
 #if WITH_EDITOR
 				FName Folder = Actor->GetFolderPath();
+				FString Label = Actor->GetActorLabel();
 				if (Folder == FName(TEXT("Dungeon_Pillars")) ||
 					Folder == FName(TEXT("Dungeon_Walls")) ||
 					Folder == FName(TEXT("Dungeon_Doors")) ||
 					Folder == FName(TEXT("Dungeon_Floors")) ||
 					Folder == FName(TEXT("Dungeon_Ceilings")) ||
-					Folder == FName(TEXT("Dungeon_Props")))
+					Folder == FName(TEXT("Dungeon_Props")) ||
+					Label.StartsWith(TEXT("Wall_")) ||
+					Label.StartsWith(TEXT("Pillar_")) ||
+					Label.StartsWith(TEXT("Doorway_")) ||
+					Label.StartsWith(TEXT("Altar_")) ||
+					Label.StartsWith(TEXT("Coffin_")) ||
+					Label.StartsWith(TEXT("Pot_")) ||
+					Label.StartsWith(TEXT("Statue_")) ||
+					Actor->ActorHasTag(TEXT("DungeonBakedActor")))
 				{
 					World->DestroyActor(Actor, false, false);
 				}
