@@ -213,6 +213,33 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Dungeon|BossRooms")
 	FVector GetBoss3SpawnLocation() const { return Boss3SpawnLocation; }
 
+	// --- Boss Defeat Tracking & Detection ---
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Dungeon|BossRooms")
+	bool bBoss1Defeated = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Dungeon|BossRooms")
+	bool bBoss2Defeated = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Dungeon|BossRooms")
+	bool bBoss3Defeated = false;
+
+	/** Sets defeat state for a specific boss (1, 2, or 3) */
+	UFUNCTION(BlueprintCallable, Category = "Dungeon|BossRooms")
+	void SetBossDefeated(int32 BossIndex, bool bDefeated = true);
+
+	/** Checks whether a specific boss (1, 2, or 3) has been defeated */
+	UFUNCTION(BlueprintPure, Category = "Dungeon|BossRooms")
+	bool IsBossDefeated(int32 BossIndex) const;
+
+	/** Returns which boss room (1, 2, 3) the world location is in, or 0 if not in any boss room */
+	UFUNCTION(BlueprintPure, Category = "Dungeon|BossRooms")
+	int32 GetBossRoomAtLocation(const FVector& WorldLocation) const;
+
+	/** Returns true if the world location is inside ANY of the 3 boss arenas */
+	UFUNCTION(BlueprintPure, Category = "Dungeon|BossRooms")
+	bool IsInsideBossRoom(const FVector& WorldLocation) const;
+
 	UFUNCTION(BlueprintPure, Category = "Dungeon|Locations")
 	FVector GetJewelRoomLocation() const { return JewelRoomLocation; }
 
