@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
@@ -52,7 +52,10 @@ protected:
 public:
 
 	/** Constructor */
-	AEchoesOfTheCatacombCharacter();	
+	AEchoesOfTheCatacombCharacter();
+
+protected:
+	virtual void BeginPlay() override;	
 
 protected:
 
