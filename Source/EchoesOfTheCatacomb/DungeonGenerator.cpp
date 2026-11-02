@@ -1,4 +1,4 @@
-
+﻿
 
 #include "DungeonGenerator.h"
 #include "Components/PointLightComponent.h"
@@ -424,9 +424,6 @@ bool ADungeonGenerator::GenerateDungeonLayout() {
   BuildBossArenas();
 
   // 2. Carve Sector 1 Maze (West Column: X in [1..9], Y in [1..18])
-  // Carve two 3x3 pillared crypt chambers as branching decision hubs
-  CarveCryptChamber(2, 3, 3, 3);
-  CarveCryptChamber(5, 11, 3, 3);
   FIntPoint S1Start(3, 3);
   FIntPoint S1End(4, 18);
   CarveSectorMaze(1, 9, 1, 18, S1Start, S1End);
@@ -443,8 +440,6 @@ bool ADungeonGenerator::GenerateDungeonLayout() {
   SetCell(11, 24, EDungeonCellType::Corridor);
 
   // 4. Carve Sector 2 Maze (Center Column: X in [11..19], Y in [12..28])
-  CarveCryptChamber(12, 14, 3, 3);
-  CarveCryptChamber(15, 22, 3, 3);
   FIntPoint S2Start(11, 24);
   FIntPoint S2End(14, 12);
   CarveSectorMaze(11, 19, 12, 28, S2Start, S2End);
@@ -461,8 +456,6 @@ bool ADungeonGenerator::GenerateDungeonLayout() {
   SetCell(21, 6, EDungeonCellType::Corridor);
 
   // 6. Carve Sector 3 Maze (East Column: X in [21..29], Y in [1..18])
-  CarveCryptChamber(22, 3, 3, 3);
-  CarveCryptChamber(25, 11, 3, 3);
   FIntPoint S3Start(21, 6);
   FIntPoint S3End(24, 18);
   CarveSectorMaze(21, 29, 1, 18, S3Start, S3End);

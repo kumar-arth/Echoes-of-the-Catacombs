@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "EchoesOfTheCatacombCharacter.h"
 #include "Engine/LocalPlayer.h"
@@ -50,6 +50,15 @@ AEchoesOfTheCatacombCharacter::AEchoesOfTheCatacombCharacter()
 	// are set in the derived blueprint asset named ThirdPersonCharacter (to avoid direct content references in C++)
 }
 
+void AEchoesOfTheCatacombCharacter::BeginPlay()
+{
+	Super::BeginPlay();
+
+	if (GetCharacterMovement())
+	{
+		GetCharacterMovement()->MaxWalkSpeed = 1000.f;
+	}
+}
 void AEchoesOfTheCatacombCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
 	// Set up action bindings
