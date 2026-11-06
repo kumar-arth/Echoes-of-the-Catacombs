@@ -27,6 +27,11 @@ enum class EDungeonCellType : uint8
 	SpecialRoom_Exit
 };
 
+class ASpikeTrap;
+class AWallDartTrap;
+class ABossMinotaur;
+class ABossArenaGate;
+
 struct FDungeonRoom
 {
 	int32 X = 0;
@@ -302,6 +307,37 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Blueprints")
 	TSubclassOf<AActor> TorchBlueprintClass;
 
+	// --- Procedural Traps ---
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Traps")
+	TSubclassOf<class ASpikeTrap> SpikeTrapClass;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Traps")
+	float TrapDensitySector1 = 0.20f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Traps")
+	float TrapDensitySector2 = 0.32f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Traps")
+	float TrapDensitySector3 = 0.45f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Traps")
+	float PeriodicTrapRatio = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Traps")
+	TSubclassOf<class AWallDartTrap> WallDartTrapClass;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Traps")
+	float WallDartTrapRatio = 0.65f;
+
+	// --- Boss Encounters ---
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Boss")
+	TSubclassOf<ABossMinotaur> BossMinotaurClass;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dungeon|Boss")
+	TSubclassOf<ABossArenaGate> BossArenaGateClass;
+
 	// --- Instanced Static Mesh Components ---
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dungeon|Components")
@@ -365,6 +401,18 @@ protected:
 	UPROPERTY()
 	TArray<TWeakObjectPtr<AActor>> SpawnedTorches;
 
+	/** Weak pointers to spawned trap actors */
+	UPROPERTY()
+	TArray<TWeakObjectPtr<AActor>> SpawnedTraps;
+
+	/** Weak pointer to spawned Boss 1 */
+	UPROPERTY()
+	TWeakObjectPtr<AActor> SpawnedBoss1;
+
+	/** Weak pointers to spawned arena gates */
+	UPROPERTY()
+	TArray<TWeakObjectPtr<AActor>> SpawnedArenaGates;
+
 	/** Weak pointers to baked static mesh actors */
 	UPROPERTY()
 	TArray<TWeakObjectPtr<AActor>> BakedActors;
@@ -383,6 +431,10 @@ protected:
 	void PlaceEnvironmentalProps();
 	void PlaceBossRoomTorches(const FDungeonRoom& Room);
 	void ClearSpawnedTorches();
+	void PlaceProceduralTraps();
+	void ClearSpawnedTraps();
+	void SpawnBossEncounter1();
+	void ClearBossEncounters();
 	void SpawnTorchActor(const FTransform& Transform);
 	bool SelectAndSetPlayerSpawn();
 

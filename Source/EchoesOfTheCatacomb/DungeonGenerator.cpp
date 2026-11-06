@@ -1,6 +1,10 @@
-﻿
+
 
 #include "DungeonGenerator.h"
+#include "SpikeTrap.h"
+#include "WallDartTrap.h"
+#include "BossMinotaur.h"
+#include "BossArenaGate.h"
 #include "Components/PointLightComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Containers/Queue.h"
@@ -74,6 +78,15 @@ ADungeonGenerator::ADungeonGenerator() {
   if (TorchBPClass.Succeeded()) {
     TorchBlueprintClass = TorchBPClass.Class;
   }
+
+  SpikeTrapClass = ASpikeTrap::StaticClass();
+  WallDartTrapClass = AWallDartTrap::StaticClass();
+  BossMinotaurClass = ABossMinotaur::StaticClass();
+  BossArenaGateClass = ABossArenaGate::StaticClass();
+  TrapDensitySector1 = 0.20f;
+  TrapDensitySector2 = 0.32f;
+  TrapDensitySector3 = 0.45f;
+  WallDartTrapRatio = 0.65f;
 
   InitializeComponents();
 }
@@ -204,6 +217,8 @@ void ADungeonGenerator::GenerateDungeon() {
   if (GenerateDungeonLayout()) {
     BuildGeometryInstances();
     PlaceEnvironmentalProps();
+    PlaceProceduralTraps();
+    SpawnBossEncounter1();
     SelectAndSetPlayerSpawn();
   }
 
@@ -305,6 +320,8 @@ void ADungeonGenerator::ClearDungeon() {
   Boss3RoomIndex = INDEX_NONE;
 
   ClearSpawnedTorches();
+  ClearSpawnedTraps();
+  ClearBossEncounters();
   ClearBakedActors();
 }
 
@@ -933,10 +950,7 @@ void ADungeonGenerator::PlaceEnvironmentalProps() {
     }
   };
 
-  // Boss 1 Entrance (South) & Exit (East)
-  PlaceDoorway(Boss1EntranceDoorLocation, FRotator(0.0f, 0.0f, 0.0f));
-  PlaceDoorway(Boss1ExitDoorLocation, FRotator(0.0f, 90.0f, 0.0f));
-
+  // Boss 1 Entrance & Exit are handled by ABossArenaGate in SpawnBossEncounter1()!
   // Boss 2 Entrance (North) & Exit (East)
   PlaceDoorway(Boss2EntranceDoorLocation, FRotator(0.0f, 180.0f, 0.0f));
   PlaceDoorway(Boss2ExitDoorLocation, FRotator(0.0f, 90.0f, 0.0f));
@@ -1265,4 +1279,379 @@ int32 ADungeonGenerator::GetBossRoomAtLocation(
 
 bool ADungeonGenerator::IsInsideBossRoom(const FVector &WorldLocation) const {
   return GetBossRoomAtLocation(WorldLocation) > 0;
+}
+
+void ADungeonGenerator::ClearSpawnedTraps() {
+  UWorld *World = GetWorld();
+  if (!World)
+    return;
+
+  TSet<AActor *> TrapsToDestroy;
+
+  for (TWeakObjectPtr<AActor> &TrapPtr : SpawnedTraps) {
+    if (TrapPtr.IsValid()) {
+      TrapsToDestroy.Add(TrapPtr.Get());
+    }
+  }
+  SpawnedTraps.Empty();
+
+  TArray<AActor *> AttachedActors;
+  GetAttachedActors(AttachedActors);
+  for (AActor *Child : AttachedActors) {
+    if (IsValid(Child) &&
+        (Child->ActorHasTag(TEXT("DungeonTrap")) ||
+         (SpikeTrapClass && Child->IsA(SpikeTrapClass)) ||
+         Child->IsA(ASpikeTrap::StaticClass()) ||
+         (WallDartTrapClass && Child->IsA(WallDartTrapClass)) ||
+         Child->IsA(AWallDartTrap::StaticClass()))) {
+      TrapsToDestroy.Add(Child);
+    }
+  }
+
+  for (TActorIterator<AActor> It(World); It; ++It) {
+    AActor *Actor = *It;
+    if (IsValid(Actor) && Actor != this) {
+      bool bIsTrap = Actor->ActorHasTag(TEXT("DungeonTrap")) ||
+                     (SpikeTrapClass && Actor->IsA(SpikeTrapClass)) ||
+                     Actor->IsA(ASpikeTrap::StaticClass()) ||
+                     (WallDartTrapClass && Actor->IsA(WallDartTrapClass)) ||
+                     Actor->IsA(AWallDartTrap::StaticClass());
+#if WITH_EDITOR
+      if (!bIsTrap) {
+        FName Folder = Actor->GetFolderPath();
+        FString Label = Actor->GetActorLabel();
+        if (Folder == FName(TEXT("Dungeon_Traps")) ||
+            Label.StartsWith(TEXT("Trap_")) ||
+            Label.StartsWith(TEXT("SpikeTrap")) ||
+            Label.StartsWith(TEXT("WallDartTrap"))) {
+          bIsTrap = true;
+        }
+      }
+#endif
+      if (bIsTrap) {
+        TrapsToDestroy.Add(Actor);
+      }
+    }
+  }
+
+  for (AActor *Trap : TrapsToDestroy) {
+    if (IsValid(Trap)) {
+      if (Trap->GetAttachParentActor()) {
+        Trap->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+      }
+#if WITH_EDITOR
+      if (World && !World->IsGameWorld()) {
+        World->EditorDestroyActor(Trap, true);
+        continue;
+      }
+#endif
+      Trap->Destroy();
+    }
+  }
+}
+
+void ADungeonGenerator::PlaceProceduralTraps() {
+  UWorld *World = GetWorld();
+  if (!World)
+    return;
+
+  ClearSpawnedTraps();
+
+  TSet<FIntPoint> PlacedTrapTiles;
+
+  // Key safety exclusion zones (Manhattan distance checks)
+  const FIntPoint SpawnTile(3, 3);
+  const TArray<FIntPoint> BossDoorTiles = {
+      FIntPoint(4, 20), FIntPoint(8, 24),   // Boss 1 enter/exit
+      FIntPoint(14, 10), FIntPoint(18, 6),  // Boss 2 enter/exit
+      FIntPoint(24, 20), FIntPoint(24, 28)  // Boss 3 enter/exit
+  };
+
+  const float FTile = (float)TileSize;
+
+  for (int32 X = 1; X < GridSize - 1; ++X) {
+    for (int32 Y = 1; Y < GridSize - 1; ++Y) {
+      const int32 CellIdx = GetGridIndex(X, Y);
+      if (!Grid.IsValidIndex(CellIdx) || Grid[CellIdx] != EDungeonCellType::Corridor) {
+        continue;
+      }
+
+      // 1. Safety check: Never within 4 tiles of spawn
+      const int32 DistToSpawn = FMath::Abs(X - SpawnTile.X) + FMath::Abs(Y - SpawnTile.Y);
+      if (DistToSpawn <= 4) {
+        continue;
+      }
+
+      // 2. Safety check: Never within 2 tiles of any boss doorway
+      bool bNearDoor = false;
+      for (const FIntPoint &Door : BossDoorTiles) {
+        if (FMath::Abs(X - Door.X) + FMath::Abs(Y - Door.Y) <= 2) {
+          bNearDoor = true;
+          break;
+        }
+      }
+      if (bNearDoor) {
+        continue;
+      }
+
+      // 3. Spacing check: Never place adjacent to an existing trap
+      if (PlacedTrapTiles.Contains(FIntPoint(X - 1, Y)) ||
+          PlacedTrapTiles.Contains(FIntPoint(X + 1, Y)) ||
+          PlacedTrapTiles.Contains(FIntPoint(X, Y - 1)) ||
+          PlacedTrapTiles.Contains(FIntPoint(X, Y + 1))) {
+        continue;
+      }
+
+      // 4. Sector density threshold
+      float TargetDensity = TrapDensitySector1;
+      if (X >= 20 || Y >= 20) {
+        TargetDensity = TrapDensitySector3;
+      } else if (X >= 10 || Y >= 10) {
+        TargetDensity = TrapDensitySector2;
+      }
+
+      // Pseudo-random roll using dungeon Seed
+      const float Roll = FMath::FRand();
+      if (Roll > TargetDensity) {
+        continue;
+      }
+
+      // 5. Determine alley orientation for wall-mounted traps
+      const bool bSolidWest = !IsWalkable(X - 1, Y);
+      const bool bSolidEast = !IsWalkable(X + 1, Y);
+      const bool bSolidNorth = !IsWalkable(X, Y + 1);
+      const bool bSolidSouth = !IsWalkable(X, Y - 1);
+
+      const bool bNorthSouthAlley = bSolidWest && bSolidEast;
+      const bool bEastWestAlley = bSolidNorth && bSolidSouth;
+
+      FActorSpawnParameters SpawnParams;
+      SpawnParams.SpawnCollisionHandlingOverride =
+          ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+      SpawnParams.OverrideLevel = World->GetCurrentLevel();
+
+      AActor *NewTrap = nullptr;
+      const bool bSpawnDart = (bNorthSouthAlley || bEastWestAlley) && (FMath::FRand() < WallDartTrapRatio);
+
+      if (bSpawnDart) {
+        TSubclassOf<AWallDartTrap> DartTrapClass =
+            WallDartTrapClass ? WallDartTrapClass : TSubclassOf<AWallDartTrap>(AWallDartTrap::StaticClass());
+
+        // Align dispenser and receiver flush against the solid walls
+        FRotator TrapRot = bNorthSouthAlley ? FRotator(0.0f, 0.0f, 0.0f) : FRotator(0.0f, 90.0f, 0.0f);
+        FVector TrapWorldLoc = GridToWorldCenter(X, Y, 0.0f);
+
+        // Small longitudinal variation along corridor axis (+/- 35 cm) so tripwires aren't strictly grid-centered
+        if (bNorthSouthAlley) {
+          TrapWorldLoc.Y += FMath::FRandRange(-35.0f, 35.0f);
+        } else {
+          TrapWorldLoc.X += FMath::FRandRange(-35.0f, 35.0f);
+        }
+
+        FTransform TrapTransform(TrapRot, TrapWorldLoc, FVector(1.0f, 1.0f, 1.0f));
+
+        AWallDartTrap *DartTrap = World->SpawnActor<AWallDartTrap>(
+            DartTrapClass, TrapTransform, SpawnParams);
+        if (DartTrap) {
+          NewTrap = DartTrap;
+#if WITH_EDITOR
+          DartTrap->SetActorLabel(FString::Printf(TEXT("WallDartTrap_%d_%d"), X, Y));
+#endif
+        }
+      } else {
+        TSubclassOf<ASpikeTrap> TrapClassToSpawn =
+            SpikeTrapClass ? SpikeTrapClass : TSubclassOf<ASpikeTrap>(ASpikeTrap::StaticClass());
+
+        FVector TrapWorldLoc = GridToWorldCenter(X, Y, 0.0f);
+
+        // Procedural placement: place pressure plates randomly across the corridor width (left, center, or right)
+        if (bNorthSouthAlley) {
+          // Hallway runs along Y; lateral corridor width is along X.
+          // Walls are at +/- 200 cm, plate is 160 cm wide.
+          // Choose Left (-75 cm), Center (0 cm), or Right (+75 cm) lane with organic jitter
+          const int32 Lane = FMath::RandRange(0, 2);
+          float OffsetX = 0.0f;
+          if (Lane == 0) {
+            OffsetX = -75.0f; // Left side
+          } else if (Lane == 1) {
+            OffsetX = 75.0f;  // Right side
+          } else {
+            OffsetX = 0.0f;   // Center
+          }
+          OffsetX += FMath::FRandRange(-10.0f, 10.0f);
+          const float OffsetY = FMath::FRandRange(-35.0f, 35.0f);
+          TrapWorldLoc += FVector(OffsetX, OffsetY, 0.0f);
+        } else if (bEastWestAlley) {
+          // Hallway runs along X; lateral corridor width is along Y.
+          const int32 Lane = FMath::RandRange(0, 2);
+          float OffsetY = 0.0f;
+          if (Lane == 0) {
+            OffsetY = -75.0f; // Left side
+          } else if (Lane == 1) {
+            OffsetY = 75.0f;  // Right side
+          } else {
+            OffsetY = 0.0f;   // Center
+          }
+          OffsetY += FMath::FRandRange(-10.0f, 10.0f);
+          const float OffsetX = FMath::FRandRange(-35.0f, 35.0f);
+          TrapWorldLoc += FVector(OffsetX, OffsetY, 0.0f);
+        } else {
+          // Bends, corners, and junctions: offset within safe walkable bounds
+          const float OffsetX = FMath::FRandRange(-70.0f, 70.0f);
+          const float OffsetY = FMath::FRandRange(-70.0f, 70.0f);
+          TrapWorldLoc += FVector(OffsetX, OffsetY, 0.0f);
+        }
+
+        FRotator TrapRot = FRotator(0.0f, FMath::RandRange(0, 3) * 90.0f, 0.0f);
+        FTransform TrapTransform(TrapRot, TrapWorldLoc, FVector(1.0f, 1.0f, 1.0f));
+
+        ASpikeTrap *SpikeTrap = World->SpawnActor<ASpikeTrap>(
+            TrapClassToSpawn, TrapTransform, SpawnParams);
+        if (SpikeTrap) {
+          SpikeTrap->bIsPeriodic = false; // Pure pressure-plate
+          NewTrap = SpikeTrap;
+#if WITH_EDITOR
+          SpikeTrap->SetActorLabel(FString::Printf(TEXT("SpikeTrap_%d_%d"), X, Y));
+#endif
+        }
+      }
+
+      if (NewTrap) {
+        NewTrap->Tags.AddUnique(TEXT("DungeonTrap"));
+
+        // Crucial: Detach so Unreal puts it into the top-level Dungeon_Traps Outliner folder!
+        if (USceneComponent *Root = NewTrap->GetRootComponent()) {
+          Root->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+        }
+        NewTrap->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+
+#if WITH_EDITOR
+        NewTrap->SetFolderPath(FName(TEXT("Dungeon_Traps")));
+#endif
+        SpawnedTraps.Add(NewTrap);
+        PlacedTrapTiles.Add(FIntPoint(X, Y));
+      }
+    }
+  }
+
+  UE_LOG(LogTemp, Log, TEXT("Procedural Traps Spawned: %d traps across the labyrinth."), PlacedTrapTiles.Num());
+}
+
+void ADungeonGenerator::SpawnBossEncounter1()
+{
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	ClearBossEncounters();
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	SpawnParams.OverrideLevel = World->GetCurrentLevel();
+
+	TSubclassOf<ABossArenaGate> GateClass = BossArenaGateClass ? BossArenaGateClass : TSubclassOf<ABossArenaGate>(ABossArenaGate::StaticClass());
+	TSubclassOf<ABossMinotaur> MinotaurClass = BossMinotaurClass ? BossMinotaurClass : TSubclassOf<ABossMinotaur>(ABossMinotaur::StaticClass());
+
+	// 1. Entrance Gate at Boss 1 Entrance (South wall: 4, 20)
+	FRotator EnterRot(0.0f, 0.0f, 0.0f);
+	ABossArenaGate* EnterGate = World->SpawnActor<ABossArenaGate>(GateClass, FTransform(EnterRot, Boss1EntranceDoorLocation), SpawnParams);
+	if (EnterGate)
+	{
+		EnterGate->bIsEntranceGate = true;
+		if (USceneComponent* Root = EnterGate->GetRootComponent())
+		{
+			Root->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+		}
+		EnterGate->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+#if WITH_EDITOR
+		EnterGate->SetActorLabel(TEXT("Boss1_EntranceGate"));
+		EnterGate->SetFolderPath(FName(TEXT("Dungeon_Bosses")));
+#endif
+		SpawnedArenaGates.Add(EnterGate);
+	}
+
+	// 2. Exit Gate at Boss 1 Exit (East wall: 8, 24)
+	FRotator ExitRot(0.0f, 90.0f, 0.0f);
+	ABossArenaGate* ExitGate = World->SpawnActor<ABossArenaGate>(GateClass, FTransform(ExitRot, Boss1ExitDoorLocation), SpawnParams);
+	if (ExitGate)
+	{
+		ExitGate->bIsEntranceGate = false;
+		if (USceneComponent* Root = ExitGate->GetRootComponent())
+		{
+			Root->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+		}
+		ExitGate->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+#if WITH_EDITOR
+		ExitGate->SetActorLabel(TEXT("Boss1_ExitGate"));
+		ExitGate->SetFolderPath(FName(TEXT("Dungeon_Bosses")));
+#endif
+		SpawnedArenaGates.Add(ExitGate);
+	}
+
+	// 3. Spawn Asterion The Minotaur in center of Boss Room 1 (4, 24) facing south toward entrance
+	FRotator MinotaurRot(0.0f, -90.0f, 0.0f);
+	ABossMinotaur* Minotaur = World->SpawnActor<ABossMinotaur>(MinotaurClass, FTransform(MinotaurRot, Boss1SpawnLocation), SpawnParams);
+	if (Minotaur)
+	{
+		Minotaur->EntranceGate = EnterGate;
+		Minotaur->ExitGate = ExitGate;
+		if (EnterGate)
+		{
+			EnterGate->LinkedBoss = Minotaur;
+		}
+
+		if (USceneComponent* Root = Minotaur->GetRootComponent())
+		{
+			Root->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+		}
+		Minotaur->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+
+#if WITH_EDITOR
+		Minotaur->SetActorLabel(TEXT("Boss1_Asterion_Minotaur"));
+		Minotaur->SetFolderPath(FName(TEXT("Dungeon_Bosses")));
+#endif
+		SpawnedBoss1 = Minotaur;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("Boss 1 Encounter Spawned: Asterion the Minotaur ready in Boss Arena 1."));
+}
+
+void ADungeonGenerator::ClearBossEncounters()
+{
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	if (SpawnedBoss1.IsValid())
+	{
+		AActor* Boss = SpawnedBoss1.Get();
+#if WITH_EDITOR
+		if (World && !World->IsGameWorld())
+		{
+			World->EditorDestroyActor(Boss, true);
+		}
+		else
+#endif
+		{
+			Boss->Destroy();
+		}
+	}
+	SpawnedBoss1.Reset();
+
+	for (TWeakObjectPtr<AActor>& GatePtr : SpawnedArenaGates)
+	{
+		if (GatePtr.IsValid())
+		{
+			AActor* Gate = GatePtr.Get();
+#if WITH_EDITOR
+			if (World && !World->IsGameWorld())
+			{
+				World->EditorDestroyActor(Gate, true);
+			}
+			else
+#endif
+			{
+				Gate->Destroy();
+			}
+		}
+	}
+	SpawnedArenaGates.Empty();
 }

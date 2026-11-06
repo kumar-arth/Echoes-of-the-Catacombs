@@ -1,6 +1,10 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "EchoesOfTheCatacombCharacter.h"
+#include "DungeonHUDWidget.h"
+#include "Engine/Engine.h"
+#include "Engine/GameViewportClient.h"
+#include "Engine/DamageEvents.h"
 #include "Engine/LocalPlayer.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
@@ -10,6 +14,10 @@
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "InputActionValue.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
+#include "UObject/ConstructorHelpers.h"
+#include "TimerManager.h"
 #include "EchoesOfTheCatacomb.h"
 
 AEchoesOfTheCatacombCharacter::AEchoesOfTheCatacombCharacter()
@@ -26,8 +34,6 @@ AEchoesOfTheCatacombCharacter::AEchoesOfTheCatacombCharacter()
 	GetCharacterMovement()->bOrientRotationToMovement = true;
 	GetCharacterMovement()->RotationRate = FRotator(0.0f, 500.0f, 0.0f);
 
-	// Note: For faster iteration times these variables, and many more, can be tweaked in the Character Blueprint
-	// instead of recompiling to adjust them
 	GetCharacterMovement()->JumpZVelocity = 500.f;
 	GetCharacterMovement()->AirControl = 0.35f;
 	GetCharacterMovement()->MaxWalkSpeed = 1000.f;
@@ -35,7 +41,7 @@ AEchoesOfTheCatacombCharacter::AEchoesOfTheCatacombCharacter()
 	GetCharacterMovement()->BrakingDecelerationWalking = 2000.f;
 	GetCharacterMovement()->BrakingDecelerationFalling = 1500.0f;
 
-	// Create a camera boom (pulls in towards the player if there is a collision)
+	// Create a camera boom
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(RootComponent);
 	CameraBoom->TargetArmLength = 400.0f;
@@ -46,24 +52,41 @@ AEchoesOfTheCatacombCharacter::AEchoesOfTheCatacombCharacter()
 	FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
 	FollowCamera->bUsePawnControlRotation = false;
 
-	// Note: The skeletal mesh and anim blueprint references on the Mesh component (inherited from Character) 
-	// are set in the derived blueprint asset named ThirdPersonCharacter (to avoid direct content references in C++)
+	// Attack sound
+	static ConstructorHelpers::FObjectFinder<USoundBase> WhooshSoundFinder(
+		TEXT("/Game/ParagonGrux/Characters/Heroes/Grux/Sounds/SoundCues/Grux_Effort_Swing.Grux_Effort_Swing"));
+	if (WhooshSoundFinder.Succeeded())
+	{
+		AttackSound = WhooshSoundFinder.Object;
+	}
+
+	CurrentHealth = MaxHealth;
 }
 
 void AEchoesOfTheCatacombCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
+	CurrentHealth = MaxHealth;
+
 	if (GetCharacterMovement())
 	{
 		GetCharacterMovement()->MaxWalkSpeed = 1000.f;
 	}
+
+	// Create and attach Screen-Space Top-Left Health Bar HUD
+	if (IsLocallyControlled() && GEngine && GEngine->GameViewport)
+	{
+		DungeonHUDWidget = SNew(SDungeonHUDWidget).Character(this);
+		GEngine->GameViewport->AddViewportWidgetContent(DungeonHUDWidget.ToSharedRef(), 100);
+	}
 }
+
 void AEchoesOfTheCatacombCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
-	// Set up action bindings
-	if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(PlayerInputComponent)) {
-		
+	// Set up Enhanced Input action bindings
+	if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(PlayerInputComponent))
+	{
 		// Jumping
 		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Started, this, &ACharacter::Jump);
 		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
@@ -75,27 +98,22 @@ void AEchoesOfTheCatacombCharacter::SetupPlayerInputComponent(UInputComponent* P
 		// Looking
 		EnhancedInputComponent->BindAction(LookAction, ETriggerEvent::Triggered, this, &AEchoesOfTheCatacombCharacter::Look);
 	}
-	else
-	{
-		UE_LOG(LogEchoesOfTheCatacomb, Error, TEXT("'%s' Failed to find an Enhanced Input component! This template is built to use the Enhanced Input system. If you intend to use the legacy system, then you will need to update this C++ file."), *GetNameSafe(this));
-	}
+
+	// Direct combat keys: Left Click to attack, Shift or Alt to dodge
+	PlayerInputComponent->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &AEchoesOfTheCatacombCharacter::PerformAttack);
+	PlayerInputComponent->BindKey(EKeys::LeftShift, IE_Pressed, this, &AEchoesOfTheCatacombCharacter::PerformDodge);
+	PlayerInputComponent->BindKey(EKeys::LeftAlt, IE_Pressed, this, &AEchoesOfTheCatacombCharacter::PerformDodge);
 }
 
 void AEchoesOfTheCatacombCharacter::Move(const FInputActionValue& Value)
 {
-	// input is a Vector2D
 	FVector2D MovementVector = Value.Get<FVector2D>();
-
-	// route the input
 	DoMove(MovementVector.X, MovementVector.Y);
 }
 
 void AEchoesOfTheCatacombCharacter::Look(const FInputActionValue& Value)
 {
-	// input is a Vector2D
 	FVector2D LookAxisVector = Value.Get<FVector2D>();
-
-	// route the input
 	DoLook(LookAxisVector.X, LookAxisVector.Y);
 }
 
@@ -103,17 +121,12 @@ void AEchoesOfTheCatacombCharacter::DoMove(float Right, float Forward)
 {
 	if (GetController() != nullptr)
 	{
-		// find out which way is forward
 		const FRotator Rotation = GetController()->GetControlRotation();
 		const FRotator YawRotation(0, Rotation.Yaw, 0);
 
-		// get forward vector
 		const FVector ForwardDirection = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
-
-		// get right vector 
 		const FVector RightDirection = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
 
-		// add movement 
 		AddMovementInput(ForwardDirection, Forward);
 		AddMovementInput(RightDirection, Right);
 	}
@@ -123,7 +136,6 @@ void AEchoesOfTheCatacombCharacter::DoLook(float Yaw, float Pitch)
 {
 	if (GetController() != nullptr)
 	{
-		// add yaw and pitch input to controller
 		AddControllerYawInput(Yaw);
 		AddControllerPitchInput(Pitch);
 	}
@@ -131,12 +143,141 @@ void AEchoesOfTheCatacombCharacter::DoLook(float Yaw, float Pitch)
 
 void AEchoesOfTheCatacombCharacter::DoJumpStart()
 {
-	// signal the character to jump
 	Jump();
 }
 
 void AEchoesOfTheCatacombCharacter::DoJumpEnd()
 {
-	// signal the character to stop jumping
 	StopJumping();
+}
+
+void AEchoesOfTheCatacombCharacter::PerformAttack()
+{
+	if (bIsAttacking || bIsDodging) return;
+
+	bIsAttacking = true;
+	GetWorldTimerManager().SetTimer(AttackCooldownHandle, this, &AEchoesOfTheCatacombCharacter::ResetAttackState, 0.35f, false);
+
+	if (AttackSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, AttackSound, GetActorLocation());
+	}
+
+	// Sphere sweep in front of player
+	const FVector Start = GetActorLocation() + FVector(0.0f, 0.0f, 15.0f);
+	const FVector End = Start + (GetActorForwardVector() * AttackRange);
+
+	FHitResult HitResult;
+	FCollisionQueryParams QueryParams;
+	QueryParams.AddIgnoredActor(this);
+
+	const bool bHit = GetWorld()->SweepSingleByChannel(
+		HitResult, Start, End, FQuat::Identity,
+		ECC_Pawn, FCollisionShape::MakeSphere(55.0f), QueryParams);
+
+	if (bHit && HitResult.GetActor())
+	{
+		AActor* HitActor = HitResult.GetActor();
+		UGameplayStatics::ApplyDamage(HitActor, AttackDamage, GetController(), this, UDamageType::StaticClass());
+
+		// Extra visual debug or knock impulse
+		if (ACharacter* EnemyChar = Cast<ACharacter>(HitActor))
+		{
+			EnemyChar->LaunchCharacter(GetActorForwardVector() * 250.0f, false, false);
+		}
+	}
+}
+
+void AEchoesOfTheCatacombCharacter::PerformDodge()
+{
+	if (bIsDodging) return;
+
+	bIsDodging = true;
+	GetWorldTimerManager().SetTimer(DodgeDurationHandle, this, &AEchoesOfTheCatacombCharacter::ResetDodgeState, 0.45f, false);
+
+	const FVector MoveInput = GetLastMovementInputVector();
+	const FVector DodgeDir = MoveInput.IsNearlyZero() ? GetActorForwardVector() : MoveInput.GetSafeNormal();
+
+	LaunchCharacter(DodgeDir * 920.0f + FVector(0.0f, 0.0f, 50.0f), true, true);
+}
+
+void AEchoesOfTheCatacombCharacter::ResetAttackState()
+{
+	bIsAttacking = false;
+}
+
+void AEchoesOfTheCatacombCharacter::ResetDodgeState()
+{
+	bIsDodging = false;
+}
+
+void AEchoesOfTheCatacombCharacter::ApplyDamage(float Damage, AActor* DamageCauser, const FVector& DamageLocation, const FVector& DamageImpulse)
+{
+	FDamageEvent DmgEvent;
+	TakeDamage(Damage, DmgEvent, DamageCauser ? DamageCauser->GetInstigatorController() : nullptr, DamageCauser);
+}
+
+float AEchoesOfTheCatacombCharacter::TakeDamage(float DamageAmount, struct FDamageEvent const& DamageEvent,
+                                              AController* EventInstigator, AActor* DamageCauser)
+{
+	// Invulnerability frames while dodge rolling!
+	if (bIsDodging)
+	{
+		return 0.0f;
+	}
+
+	CurrentHealth = FMath::Clamp(CurrentHealth - DamageAmount, 0.0f, MaxHealth);
+
+	if (CurrentHealth <= 0.0f)
+	{
+		HandleDeath();
+	}
+
+	return DamageAmount;
+}
+
+void AEchoesOfTheCatacombCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	GetWorldTimerManager().ClearAllTimersForObject(this);
+
+	if (DungeonHUDWidget.IsValid() && GEngine && GEngine->GameViewport)
+	{
+		GEngine->GameViewport->RemoveViewportWidgetContent(DungeonHUDWidget.ToSharedRef());
+		DungeonHUDWidget.Reset();
+	}
+
+	Super::EndPlay(EndPlayReason);
+}
+
+void AEchoesOfTheCatacombCharacter::HandleDeath()
+{
+	// Disable player input and movement
+	if (GetCharacterMovement())
+	{
+		GetCharacterMovement()->StopMovementImmediately();
+		GetCharacterMovement()->DisableMovement();
+	}
+	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	// On-screen notification so the player knows they took fatal damage
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("YOU DIED - Slain in the Catacombs"));
+	}
+
+	// 1.5s delay before reloading at spawn point
+	GetWorldTimerManager().SetTimer(RespawnTimerHandle, this, &AEchoesOfTheCatacombCharacter::ReloadCurrentLevel, 1.5f, false);
+}
+
+void AEchoesOfTheCatacombCharacter::ReloadCurrentLevel()
+{
+	if (UWorld* World = GetWorld())
+	{
+		UGameplayStatics::OpenLevel(this, FName(*World->GetName()), false);
+	}
+}
+
+void AEchoesOfTheCatacombCharacter::ApplyHealing(float Healing, AActor* Healer)
+{
+	CurrentHealth = FMath::Clamp(CurrentHealth + Healing, 0.0f, MaxHealth);
 }
