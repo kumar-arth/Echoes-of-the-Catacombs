@@ -2258,8 +2258,7 @@ void ADungeonGenerator::SpawnVictoryPortal() {
   // In exit doorway of Room 3
   const FVector PortalLoc = Boss3ExitDoorLocation + FVector(0.0f, 0.0f, 20.0f);
   UStaticMesh *PortalMesh = LoadObject<UStaticMesh>(
-      nullptr, TEXT("/Game/ParagonKwang/FX/Meshes/Shapes/"
-                    "SM_KwangTeleport.SM_KwangTeleport"));
+      nullptr, TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
 
   FActorSpawnParameters SpawnParams;
   SpawnParams.SpawnCollisionHandlingOverride =

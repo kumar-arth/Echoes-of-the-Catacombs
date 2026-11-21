@@ -28,3 +28,21 @@ Thumbs.db
 # Personal AI/editor config
 .cursor/
 .gemini/
+
+# Local untracked asset packs & gameplay content
+Content/AncientContent/
+Content/Anims/
+Content/ArcherAnimsetPro/
+Content/Audio/
+Content/Characters/Mannequin_UE4/
+Content/CombatMasterAnimBundle/
+Content/CombatSystem/
+Content/Dark_Knight/
+Content/Destructibles/
+Content/Effects/
+Content/Fab/
+Content/IdaFaber/
+Content/Mixamo/
+Content/SM_KnightSword.uasset
+Content/Weapons/
+Content/_GAME/
