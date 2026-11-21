@@ -1,7 +1,15 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "EchoPulseComponent.h"
 #include "DungeonGenerator.h"
+#include "SpikeTrap.h"
+#include "WallDartTrap.h"
+#include "BossMinotaur.h"
+#include "BossGrux.h"
+#include "BossShadowKnight.h"
+#include "EngineUtils.h"
+#include "Components/MeshComponent.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "Kismet/KismetMaterialLibrary.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/Actor.h"
@@ -35,7 +43,8 @@ void UEchoPulseComponent::BeginPlay()
 	StopPulse(); // Reset parameters on level start
 	if (EchoMPC)
 	{
-		UKismetMaterialLibrary::SetScalarParameterValue(GetWorld(), EchoMPC, FName(TEXT("BossRoomLight")), 0.0f);
+		// Maze is now lit (dimly lit with torches), keep BossRoomLight at 1.0f so post-process does not black out corridors
+		UKismetMaterialLibrary::SetScalarParameterValue(GetWorld(), EchoMPC, FName(TEXT("BossRoomLight")), 1.0f);
 		if (GetOwner() && GetWorld())
 		{
 			const FVector OwnerLoc = GetOwner()->GetActorLocation();
@@ -85,24 +94,10 @@ void UEchoPulseComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 		}
 	}
 
-	// Dynamic Boss Room illumination transition (rises to 1.0 on enter, lowers to 0.0 in maze)
-	const float TargetBossLight = (CurrentBossRoomIndex > 0) ? 1.0f : 0.0f;
-	static float CurrentBossLight = 0.0f;
-	if (FMath::Abs(CurrentBossLight - TargetBossLight) > 0.001f)
+	// Keep maze lit (dimly lit via ambient/torches), keep BossRoomLight at 1.0f so post-process never blacks out corridors
+	if (EchoMPC)
 	{
-		CurrentBossLight = FMath::FInterpTo(CurrentBossLight, TargetBossLight, DeltaTime, 4.0f);
-		if (EchoMPC)
-		{
-			UKismetMaterialLibrary::SetScalarParameterValue(GetWorld(), EchoMPC, FName(TEXT("BossRoomLight")), CurrentBossLight);
-		}
-	}
-	else if (CurrentBossLight != TargetBossLight)
-	{
-		CurrentBossLight = TargetBossLight;
-		if (EchoMPC)
-		{
-			UKismetMaterialLibrary::SetScalarParameterValue(GetWorld(), EchoMPC, FName(TEXT("BossRoomLight")), CurrentBossLight);
-		}
+		UKismetMaterialLibrary::SetScalarParameterValue(GetWorld(), EchoMPC, FName(TEXT("BossRoomLight")), 1.0f);
 	}
 
 	// Continuously update live Player Location for post-process character visibility / spotlight sphere mask
@@ -195,47 +190,132 @@ void UEchoPulseComponent::CheckBossRoomStatus()
 	}
 }
 
-void UEchoPulseComponent::TriggerPulse(FVector Origin, float InMaxRadius, float InSpeed, FLinearColor InColor)
+void UEchoPulseComponent::TriggerEcholocationScan()
 {
 	if (!bIsPulseEnabled)
 	{
 		if (bShowDebugMessages && GEngine)
 		{
-			GEngine->AddOnScreenDebugMessage(1002, 1.5f, FColor::Yellow, TEXT("Echo Pulse is Disabled inside Boss Room!"));
+			GEngine->AddOnScreenDebugMessage(1002, 1.5f, FColor::Yellow, TEXT("Echolocation is Disabled inside Boss Rooms!"));
 		}
 		return;
 	}
 
-	// Safeguard: even if pulse was enabled, ensure origin isn't inside a boss room
-	if (DungeonGenerator.IsValid() && DungeonGenerator->IsInsideBossRoom(Origin))
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	AActor* Owner = GetOwner();
+	if (!Owner)
 	{
+		Owner = UGameplayStatics::GetPlayerPawn(World, 0);
+	}
+	if (!Owner) return;
+
+	const FVector Origin = Owner->GetActorLocation();
+
+	// Safeguard: ensure origin isn't inside a boss room
+	if (CurrentBossRoomIndex > 0 || (DungeonGenerator.IsValid() && DungeonGenerator->IsInsideBossRoom(Origin)))
+	{
+		if (bShowDebugMessages && GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(1002, 1.5f, FColor::Yellow, TEXT("Echolocation is Disabled inside Boss Rooms!"));
+		}
 		return;
 	}
 
-	bIsPulseActive = true;
-	CurrentOrigin = Origin;
-	CurrentRadius = 0.0f;
-	ActiveMaxRadius = (InMaxRadius > 0.0f) ? InMaxRadius : DefaultMaxRadius;
-	ActiveSpeed = (InSpeed > 0.0f) ? InSpeed : DefaultPulseSpeed;
-	ActiveColor = InColor;
+	const float RadiusSq = FMath::Square(ScanRadius);
+	int32 RevealedHazards = 0;
 
-	UpdateMaterialParameters();
+	// 1. Scan and highlight all Spike Traps in range
+	for (TActorIterator<ASpikeTrap> It(World); It; ++It)
+	{
+		ASpikeTrap* Trap = *It;
+		if (IsValid(Trap) && FVector::DistSquared(Origin, Trap->GetActorLocation()) <= RadiusSq)
+		{
+			Trap->HighlightTrap(HighlightDuration);
+			RevealedHazards++;
+		}
+	}
+
+	// 2. Scan and highlight all Wall Dart Traps in range
+	for (TActorIterator<AWallDartTrap> It(World); It; ++It)
+	{
+		AWallDartTrap* DartTrap = *It;
+		if (IsValid(DartTrap) && FVector::DistSquared(Origin, DartTrap->GetActorLocation()) <= RadiusSq)
+		{
+			DartTrap->HighlightTrap(HighlightDuration);
+			RevealedHazards++;
+		}
+	}
+
+	// 3. Scan and highlight all non-boss enemy pawns (mobs) in range
+	for (TActorIterator<APawn> It(World); It; ++It)
+	{
+		APawn* Pawn = *It;
+		if (!IsValid(Pawn) || Pawn == Owner) continue;
+
+		// Strictly exclude all 3 bosses!
+		if (Pawn->IsA(ABossMinotaur::StaticClass()) ||
+			Pawn->IsA(ABossGrux::StaticClass()) ||
+			Pawn->IsA(ABossShadowKnight::StaticClass()))
+		{
+			continue;
+		}
+
+		if (FVector::DistSquared(Origin, Pawn->GetActorLocation()) <= RadiusSq)
+		{
+			static UMaterialInterface* OverlayMat = nullptr;
+			if (!OverlayMat)
+			{
+				OverlayMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/EngineDebugMaterials/GeomMaterial.GeomMaterial"));
+			}
+			UMaterialInstanceDynamic* HighlightMID = nullptr;
+			if (OverlayMat)
+			{
+				HighlightMID = UMaterialInstanceDynamic::Create(OverlayMat, Pawn);
+				if (HighlightMID)
+				{
+					HighlightMID->SetVectorParameterValue(FName(TEXT("Color")), DefaultPulseColor);
+					HighlightMID->SetScalarParameterValue(FName(TEXT("Opacity")), 0.75f);
+				}
+			}
+
+			TArray<UMeshComponent*> MeshComponents;
+			Pawn->GetComponents<UMeshComponent>(MeshComponents);
+			for (UMeshComponent* Mesh : MeshComponents)
+			{
+				if (Mesh)
+				{
+					Mesh->SetRenderCustomDepth(true);
+					Mesh->SetCustomDepthStencilValue(2);
+					if (HighlightMID)
+					{
+						Mesh->SetOverlayMaterial(HighlightMID);
+					}
+				}
+			}
+			RevealedHazards++;
+		}
+	}
 
 	// Emit acoustic noise event to alert enemy AI hearing perception
-	AActor* Owner = GetOwner();
-	if (Owner)
+	Owner->MakeNoise(NoiseLoudness, Cast<APawn>(Owner), Origin);
+
+	if (bShowDebugMessages && GEngine)
 	{
-		Owner->MakeNoise(NoiseLoudness, Cast<APawn>(Owner), CurrentOrigin);
+		const FString Msg = FString::Printf(TEXT("ECHOLOCATION [F]: %d Hazard(s) Revealed through walls (%.0fm range)!"), RevealedHazards, ScanRadius / 100.0f);
+		GEngine->AddOnScreenDebugMessage(1003, 2.5f, FLinearColor(0.15f, 0.85f, 1.0f).ToFColor(true), Msg);
 	}
+}
+
+void UEchoPulseComponent::TriggerPulse(FVector Origin, float InMaxRadius, float InSpeed, FLinearColor InColor)
+{
+	TriggerEcholocationScan();
 }
 
 void UEchoPulseComponent::TriggerPulseFromOwner()
 {
-	AActor* Owner = GetOwner();
-	if (Owner)
-	{
-		TriggerPulse(Owner->GetActorLocation(), DefaultMaxRadius, DefaultPulseSpeed, DefaultPulseColor);
-	}
+	TriggerEcholocationScan();
 }
 
 void UEchoPulseComponent::StopPulse()

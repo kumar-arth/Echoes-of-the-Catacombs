@@ -8,6 +8,7 @@
 
 class AEchoesOfTheCatacombCharacter;
 class ABossMinotaur;
+class ABossGrux;
 
 class SDungeonHUDWidget : public SCompoundWidget
 {
@@ -26,10 +27,11 @@ public:
 
 private:
 	TWeakObjectPtr<AEchoesOfTheCatacombCharacter> CharacterOwner;
-	TWeakObjectPtr<ABossMinotaur> CachedBoss;
+	TWeakObjectPtr<AActor> CachedBossActor;
 
-	// Smooth ghost health trailing animation (Souls-like)
+	// Smooth ghost health & stamina trailing animation (Souls-like)
 	mutable float PlayerGhostPercent = 1.0f;
+	mutable float PlayerStaminaGhostPercent = 1.0f;
 	mutable float BossGhostPercent = 1.0f;
 	mutable double LastPaintTime = 0.0;
 

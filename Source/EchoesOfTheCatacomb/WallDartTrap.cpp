@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "WallDartTrap.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "DartProjectile.h"
 #include "Components/BoxComponent.h"
 #include "Components/SphereComponent.h"
@@ -18,37 +19,35 @@ AWallDartTrap::AWallDartTrap()
 	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
 	RootComponent = SceneRoot;
 
-	const float HalfSpan = CorridorSpan * 0.5f; // 200.0f for 400cm corridor
+	const float HalfSpan = CorridorSpan * 0.5f; // 250.0f for 500cm corridor
 
-	// 2. Wall Dispenser (mounted flush on negative X wall at tripwire height)
+	// 2. Wall Dispenser (embedded recessed inside negative X wall at tripwire height)
 	DispenserMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("DispenserMesh"));
 	DispenserMesh->SetupAttachment(RootComponent);
-	DispenserMesh->SetRelativeLocation(FVector(-HalfSpan, 0.0f, TripwireHeight));
-	DispenserMesh->SetRelativeScale3D(FVector(0.25f, 0.45f, 0.45f));
-	DispenserMesh->SetCollisionProfileName(TEXT("BlockAll"));
-	DispenserMesh->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Ignore);
+	DispenserMesh->SetRelativeLocation(FVector(-HalfSpan - 3.0f, 0.0f, TripwireHeight));
+	DispenserMesh->SetRelativeScale3D(FVector(0.08f, 0.22f, 0.22f));
+	DispenserMesh->SetCollisionProfileName(TEXT("NoCollision"));
 
-	// 3. Wall Receiver (mounted flush on positive X wall at tripwire height)
+	// 3. Wall Receiver (embedded recessed inside positive X wall at tripwire height)
 	ReceiverMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ReceiverMesh"));
 	ReceiverMesh->SetupAttachment(RootComponent);
-	ReceiverMesh->SetRelativeLocation(FVector(HalfSpan, 0.0f, TripwireHeight));
-	ReceiverMesh->SetRelativeScale3D(FVector(0.15f, 0.35f, 0.35f));
-	ReceiverMesh->SetCollisionProfileName(TEXT("BlockAll"));
-	ReceiverMesh->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Ignore);
+	ReceiverMesh->SetRelativeLocation(FVector(HalfSpan + 3.0f, 0.0f, TripwireHeight));
+	ReceiverMesh->SetRelativeScale3D(FVector(0.06f, 0.18f, 0.18f));
+	ReceiverMesh->SetCollisionProfileName(TEXT("NoCollision"));
 
-	// 4. Tripwire Mesh (thin cord stretched directly between dispenser and receiver at tripwire height)
+	// 4. Tripwire Mesh (thin 2.5mm cord stretched cleanly between dispenser and receiver at tripwire height)
 	TripwireMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("TripwireMesh"));
 	TripwireMesh->SetupAttachment(RootComponent);
 	TripwireMesh->SetRelativeLocation(FVector(0.0f, 0.0f, TripwireHeight));
 	TripwireMesh->SetRelativeRotation(FRotator(90.0f, 0.0f, 0.0f));
-	TripwireMesh->SetRelativeScale3D(FVector(0.02f, 0.02f, 3.8f));
+	TripwireMesh->SetRelativeScale3D(FVector(0.0025f, 0.0025f, 5.08f));
 	TripwireMesh->SetCollisionProfileName(TEXT("NoCollision"));
 
 	// 5. Tripwire Trigger Box (spans across the alley at tripwire height)
 	TripwireBox = CreateDefaultSubobject<UBoxComponent>(TEXT("TripwireBox"));
 	TripwireBox->SetupAttachment(RootComponent);
 	TripwireBox->SetRelativeLocation(FVector(0.0f, 0.0f, TripwireHeight));
-	TripwireBox->SetBoxExtent(FVector(180.0f, 25.0f, 25.0f));
+	TripwireBox->SetBoxExtent(FVector(245.0f, 25.0f, 25.0f));
 	TripwireBox->SetCollisionProfileName(TEXT("Trigger"));
 	TripwireBox->SetGenerateOverlapEvents(true);
 
@@ -68,12 +67,24 @@ AWallDartTrap::AWallDartTrap()
 		TripwireMesh->SetStaticMesh(CylinderFinder.Object);
 	}
 
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> StoneMatFinder(
+		TEXT("/Game/MedievalDungeon/Materials/M_StoneWall_Inst.M_StoneWall_Inst"));
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> IronMatFinder(
 		TEXT("/Game/MedievalDungeon/Materials/M_Metal_Decor_Inst.M_Metal_Decor_Inst"));
-	if (IronMatFinder.Succeeded())
+
+	if (StoneMatFinder.Succeeded())
+	{
+		DispenserMesh->SetMaterial(0, StoneMatFinder.Object);
+		ReceiverMesh->SetMaterial(0, StoneMatFinder.Object);
+	}
+	else if (IronMatFinder.Succeeded())
 	{
 		DispenserMesh->SetMaterial(0, IronMatFinder.Object);
 		ReceiverMesh->SetMaterial(0, IronMatFinder.Object);
+	}
+
+	if (IronMatFinder.Succeeded())
+	{
 		TripwireMesh->SetMaterial(0, IronMatFinder.Object);
 	}
 
@@ -100,6 +111,26 @@ AWallDartTrap::AWallDartTrap()
 void AWallDartTrap::BeginPlay()
 {
 	Super::BeginPlay();
+
+	const float HalfSpan = CorridorSpan * 0.5f;
+	if (DispenserMesh)
+	{
+		DispenserMesh->SetRelativeLocation(FVector(-HalfSpan - 3.0f, 0.0f, TripwireHeight));
+	}
+	if (ReceiverMesh)
+	{
+		ReceiverMesh->SetRelativeLocation(FVector(HalfSpan + 3.0f, 0.0f, TripwireHeight));
+	}
+	if (TripwireMesh)
+	{
+		TripwireMesh->SetRelativeLocation(FVector(0.0f, 0.0f, TripwireHeight));
+		TripwireMesh->SetRelativeScale3D(FVector(0.0025f, 0.0025f, (CorridorSpan + 8.0f) * 0.01f));
+	}
+	if (TripwireBox)
+	{
+		TripwireBox->SetRelativeLocation(FVector(0.0f, 0.0f, TripwireHeight));
+		TripwireBox->SetBoxExtent(FVector(FMath::Max(10.0f, HalfSpan - 5.0f), 25.0f, 25.0f));
+	}
 
 	TripwireBox->OnComponentBeginOverlap.AddDynamic(this, &AWallDartTrap::OnTriggerOverlapBegin);
 	TrapState = EDartTrapState::Armed;
@@ -242,22 +273,51 @@ void AWallDartTrap::ResetTrap()
 
 void AWallDartTrap::HighlightTrap(float Duration)
 {
+	static UMaterialInterface* OverlayMat = nullptr;
+	if (!OverlayMat)
+	{
+		OverlayMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/EngineDebugMaterials/GeomMaterial.GeomMaterial"));
+	}
+	UMaterialInstanceDynamic* HighlightMID = nullptr;
+	if (OverlayMat)
+	{
+		HighlightMID = UMaterialInstanceDynamic::Create(OverlayMat, this);
+		if (HighlightMID)
+		{
+			HighlightMID->SetVectorParameterValue(FName(TEXT("Color")), FLinearColor(0.15f, 0.85f, 1.0f, 1.0f));
+			HighlightMID->SetScalarParameterValue(FName(TEXT("Opacity")), 0.75f);
+		}
+	}
+
 	if (DispenserMesh)
 	{
 		DispenserMesh->SetRenderCustomDepth(true);
 		DispenserMesh->SetCustomDepthStencilValue(2);
+		if (HighlightMID)
+		{
+			DispenserMesh->SetOverlayMaterial(HighlightMID);
+		}
 	}
 	if (ReceiverMesh)
 	{
 		ReceiverMesh->SetRenderCustomDepth(true);
 		ReceiverMesh->SetCustomDepthStencilValue(2);
+		if (HighlightMID)
+		{
+			ReceiverMesh->SetOverlayMaterial(HighlightMID);
+		}
 	}
 	if (TripwireMesh)
 	{
 		TripwireMesh->SetRenderCustomDepth(true);
 		TripwireMesh->SetCustomDepthStencilValue(2);
+		if (HighlightMID)
+		{
+			TripwireMesh->SetOverlayMaterial(HighlightMID);
+		}
 	}
 
+	GetWorldTimerManager().ClearTimer(HighlightTimerHandle);
 	GetWorldTimerManager().SetTimer(HighlightTimerHandle, this, &AWallDartTrap::OnHighlightExpired, Duration, false);
 }
 
@@ -266,13 +326,16 @@ void AWallDartTrap::OnHighlightExpired()
 	if (DispenserMesh)
 	{
 		DispenserMesh->SetRenderCustomDepth(false);
+		DispenserMesh->SetOverlayMaterial(nullptr);
 	}
 	if (ReceiverMesh)
 	{
 		ReceiverMesh->SetRenderCustomDepth(false);
+		ReceiverMesh->SetOverlayMaterial(nullptr);
 	}
 	if (TripwireMesh)
 	{
 		TripwireMesh->SetRenderCustomDepth(false);
+		TripwireMesh->SetOverlayMaterial(nullptr);
 	}
 }

@@ -76,11 +76,14 @@ void ADartProjectile::OnHit(UPrimitiveComponent* HitComp, AActor* OtherActor,
 	// Hit player or character
 	if (ACharacter* Char = Cast<ACharacter>(OtherActor))
 	{
-		UGameplayStatics::ApplyDamage(Char, DamageAmount, nullptr, this, UDamageType::StaticClass());
+		const float ActualDamage = UGameplayStatics::ApplyDamage(Char, DamageAmount, nullptr, this, UDamageType::StaticClass());
 
-		// Knock the player back in the direction of the dart flight
-		const FVector HitDir = ProjectileMovement ? ProjectileMovement->Velocity.GetSafeNormal() : GetActorForwardVector();
-		Char->LaunchCharacter(HitDir * 550.0f + FVector(0.0f, 0.0f, 150.0f), true, true);
+		// Knock the player back in the direction of the dart flight only if damage was actually taken (not blocked by shield)
+		if (ActualDamage > 0.0f)
+		{
+			const FVector HitDir = ProjectileMovement ? ProjectileMovement->Velocity.GetSafeNormal() : GetActorForwardVector();
+			Char->LaunchCharacter(HitDir * 550.0f + FVector(0.0f, 0.0f, 150.0f), true, true);
+		}
 	}
 
 	Destroy();

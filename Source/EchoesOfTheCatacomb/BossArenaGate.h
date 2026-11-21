@@ -7,6 +7,7 @@
 #include "BossArenaGate.generated.h"
 
 class UStaticMeshComponent;
+class USceneComponent;
 class UBoxComponent;
 class USoundBase;
 
@@ -27,37 +28,58 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	USceneComponent* SceneRoot;
 
-	/** Arched doorway frame */
+	/** Arched stone doorway frame matching dungeon walls */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	UStaticMeshComponent* FrameMesh;
 
-	/** Heavy iron cell door / portcullis that seals the passage */
+	/** Left door hinge pivot (at left side of doorway frame) */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	UStaticMeshComponent* GateMesh;
+	USceneComponent* HingeLeft;
 
-	/** Player entry detection box on the room side of the entrance */
+	/** Heavy wooden left door with iron straps */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	UBoxComponent* TriggerBox;
+	UStaticMeshComponent* DoorLeftMesh;
 
-	/** If true, this is the room entrance gate that slams shut behind player */
+	/** Right door hinge pivot (at right side of doorway frame) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	USceneComponent* HingeRight;
+
+	/** Heavy wooden right door with iron straps */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	UStaticMeshComponent* DoorRightMesh;
+
+	/** Detects player approaching from corridor to swing doors open */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	UBoxComponent* ApproachTrigger;
+
+	/** Detects player stepping into the arena to slam doors shut and engage boss */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	UBoxComponent* ArenaEntryTrigger;
+
+	/** If true, this is an entrance gate; otherwise exit gate */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Gate")
 	bool bIsEntranceGate = true;
 
 	/** Current open state */
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Gate")
-	bool bIsOpen = true;
+	bool bIsOpen = false;
 
-	/** Z offset when gate is raised up open */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Gate")
-	float OpenZOffset = 260.0f;
+	/** True once player has entered and entrance gate is permanently locked shut */
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Gate")
+	bool bHasSealed = false;
 
-	/** Target relative Z */
-	float TargetZ = 0.0f;
-	float CurrentZ = 0.0f;
+	/** Target door rotation angles */
+	float TargetLeftYaw = 0.0f;
+	float TargetRightYaw = 0.0f;
+	float CurrentLeftYaw = 0.0f;
+	float CurrentRightYaw = 0.0f;
 
-	/** Gate drop sound */
+	/** Door slam and creak sounds */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Gate|Audio")
-	USoundBase* GateSound;
+	USoundBase* SlamSound;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Gate|Audio")
+	USoundBase* CreakSound;
 
 	UFUNCTION(BlueprintCallable, Category = "Gate")
 	void CloseGate();
@@ -66,11 +88,21 @@ public:
 	void OpenGate();
 
 	UFUNCTION()
-	void OnTriggerOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor* OtherActor,
+	void OnApproachOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor* OtherActor,
 	                           UPrimitiveComponent* OtherComp, int32 OtherBodyIndex,
 	                           bool bFromSweep, const FHitResult& SweepResult);
 
+	UFUNCTION()
+	void OnArenaEntryOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor* OtherActor,
+	                             UPrimitiveComponent* OtherComp, int32 OtherBodyIndex,
+	                             bool bFromSweep, const FHitResult& SweepResult);
+
 	UPROPERTY()
 	TWeakObjectPtr<class ABossMinotaur> LinkedBoss;
-};
 
+	UPROPERTY()
+	TWeakObjectPtr<class ABossGrux> LinkedBossGrux;
+
+	UPROPERTY()
+	TWeakObjectPtr<class ABossShadowKnight> LinkedBossShadowKnight;
+};

@@ -79,7 +79,7 @@ public:
 
 	/** Corridor width span between dispenser and receiver */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trap|Config")
-	float CorridorSpan = 400.0f;
+	float CorridorSpan = 500.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trap|Audio")
 	USoundBase* TriggerSound;

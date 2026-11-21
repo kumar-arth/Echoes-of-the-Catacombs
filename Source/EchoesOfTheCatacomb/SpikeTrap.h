@@ -38,11 +38,11 @@ public:
 	// Components
 	// -------------------------------------------------------------
 
-	/** Root scene component */
+	/** Root scene component centered at the grid cell */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Trap|Components")
 	USceneComponent* SceneRoot;
 
-	/** Compact recessed floor plate embedded in the corridor floor (160x160 cm) */
+	/** Small stone pressure plate embedded flush in the floor (100x100 cm) */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Trap|Components")
 	UStaticMeshComponent* BasePlateMesh;
 
@@ -50,11 +50,11 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Trap|Components")
 	USceneComponent* SpikesContainer;
 
-	/** High-performance instanced mesh for the sharp metal spikes (3x3 grid) */
+	/** Compact instanced mesh for the sharp metal spikes (3x3 grid) */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Trap|Components")
 	UInstancedStaticMeshComponent* SpikesISM;
 
-	/** Overlap trigger volume that detects pawns stepping on the floor plate */
+	/** Overlap trigger volume that detects pawns stepping onto the pressure plate */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Trap|Components")
 	UBoxComponent* TriggerBox;
 
@@ -72,7 +72,7 @@ public:
 
 	/** Warning delay between stepping on the plate and spikes impaling (seconds) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trap|Config")
-	float WarningDelay = 0.30f;
+	float WarningDelay = 0.25f;
 
 	/** Duration spikes stay extended before retracting (seconds) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trap|Config")
@@ -84,7 +84,7 @@ public:
 
 	/** Base damage applied to overlapping pawns upon springing */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trap|Config")
-	float DamageAmount = 40.0f;
+	float DamageAmount = 8.0f;
 
 	/** Upward impulse launch applied to the character on impale */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trap|Config")
@@ -94,13 +94,25 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trap|Config")
 	float SpikeRetractedZ = -30.0f;
 
-	/** Fully extended Z position of the sharp spikes (knee height) */
+	/** Fully extended Z position of the sharp spikes (knee/waist height) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trap|Config")
-	float SpikeExtendedZ = 40.0f;
+	float SpikeExtendedZ = 45.0f;
+
+	/** Depth the floor plate sinks into the ground when stepped on (cm) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trap|Config")
+	float PlateSinkDepth = 3.0f;
+
+	/** Speed at which the floor plate sinks (cm/s) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trap|Config")
+	float PlateSinkSpeed = 60.0f;
+
+	/** Speed at which the floor plate rises back to flush (cm/s) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trap|Config")
+	float PlateRiseSpeed = 15.0f;
 
 	/** Speed of the rapid spring action (units per second) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trap|Config")
-	float SpringSpeed = 2000.0f;
+	float SpringSpeed = 2200.0f;
 
 	/** Speed of the slow reset retraction (units per second) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trap|Config")
@@ -138,12 +150,13 @@ public:
 
 	/** Highlights trap outline (e.g., when scanned by echolocation wave) */
 	UFUNCTION(BlueprintCallable, Category = "Trap|Echolocation")
-	void HighlightTrap(float Duration = 2.5f);
+	void HighlightTrap(float Duration = 3.5f);
 
 private:
 	float StateTimer = 0.0f;
 	float PeriodicTimer = 0.0f;
 	float CurrentSpikeZ = -30.0f;
+	float CurrentPlateZ = 0.2f;
 	FTimerHandle HighlightTimerHandle;
 
 	UPROPERTY()

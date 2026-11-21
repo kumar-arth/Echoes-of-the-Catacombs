@@ -18,6 +18,8 @@ public:
 	
 	/** Constructor */
 	AEchoesOfTheCatacombGameMode();
+
+	virtual AActor* FindPlayerStart_Implementation(AController* Player, const FString& IncomingName = TEXT("")) override;
 };
 
 

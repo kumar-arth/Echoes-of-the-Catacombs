@@ -8,6 +8,7 @@
 #include "BossMinotaur.generated.h"
 
 class UStaticMeshComponent;
+class USkeletalMeshComponent;
 class UBoxComponent;
 class UAnimSequence;
 class USoundBase;
@@ -62,10 +63,10 @@ public:
 	float CurrentHealth = 600.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boss|Stats")
-	float MeleeDamage = 35.0f;
+	float MeleeDamage = 8.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boss|Stats")
-	float ChargeDamage = 55.0f;
+	float ChargeDamage = 14.0f;
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Boss|State")
 	EMinotaurState BossState = EMinotaurState::Dormant;
@@ -104,6 +105,9 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Boss|Anim")
 	UAnimSequence* KickAnim;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Boss|Anim")
+	UAnimSequence* StompAnim;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Boss|Anim")
 	UAnimSequence* HitReactAnim;
@@ -155,11 +159,13 @@ protected:
 	FTimerHandle ChargeTimerHandle;
 	FTimerHandle HitboxWindowHandle;
 	FTimerHandle HitboxCloseHandle;
+	FTimerHandle StompImpactHandle;
 
 	float AttackCooldownTimer = 0.0f;
-	float ChargeCooldownTimer = 12.0f;
+	float ChargeCooldownTimer = 10.0f;
 	FVector ChargeTargetDirection = FVector::ZeroVector;
 
+	int32 LastAttackIndex = -1;
 	TArray<TWeakObjectPtr<AActor>> HitActorsThisAttack;
 
 	UPROPERTY()
@@ -170,5 +176,21 @@ protected:
 	void OnHitboxOpen();
 	void OnHitboxClose();
 	void OnChargeTimeout();
+	void TriggerStompImpact();
+
+	// Aurelius - The Iron Bastion Components & Armor
+	USkeletalMeshComponent* ChestMesh = nullptr;
+	USkeletalMeshComponent* HelmetMesh = nullptr;
+	USkeletalMeshComponent* GauntletMesh = nullptr;
+	USkeletalMeshComponent* LegMesh = nullptr;
+	UStaticMeshComponent* ShieldMesh = nullptr;
+
+	UAnimSequence* GuardLoopAnim = nullptr;
+	UAnimSequence* GuardHitAnim = nullptr;
+	UAnimSequence* GuardCounterAnim = nullptr;
+
+	bool bIsShieldGuarding = false;
+	float GuardDurationTimer = 0.0f;
+	int32 GuardHitCount = 0;
 };
 

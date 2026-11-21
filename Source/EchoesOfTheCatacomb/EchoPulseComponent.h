@@ -33,6 +33,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Echo|Pulse")
 	void TriggerPulseFromOwner();
 
+	/** Triggers targeted tactical scan: highlights traps and non-boss mobs in radius through walls */
+	UFUNCTION(BlueprintCallable, Category = "Echo|Pulse")
+	void TriggerEcholocationScan();
+
 	/** Stops and resets the pulse */
 	UFUNCTION(BlueprintCallable, Category = "Echo|Pulse")
 	void StopPulse();
@@ -77,6 +81,14 @@ public:
 	/** Default glowing color */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Echo|Parameters")
 	FLinearColor DefaultPulseColor = FLinearColor(0.15f, 0.85f, 1.0f, 1.0f);
+
+	/** Detection radius for scanning traps and mobs (cm). 2200 = 22 meters */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Echo|Parameters")
+	float ScanRadius = 2200.0f;
+
+	/** Duration in seconds highlighted objects remain visible through walls */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Echo|Parameters")
+	float HighlightDuration = 3.5f;
 
 	/** Noise loudness to alert AI perception (0.0 to 1.0) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Echo|Acoustics")

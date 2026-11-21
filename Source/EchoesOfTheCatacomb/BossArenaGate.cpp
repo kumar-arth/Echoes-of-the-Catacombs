@@ -2,12 +2,15 @@
 
 #include "BossArenaGate.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/SceneComponent.h"
 #include "Components/BoxComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "Sound/SoundBase.h"
 #include "UObject/ConstructorHelpers.h"
 #include "GameFramework/Character.h"
 #include "BossMinotaur.h"
+#include "BossGrux.h"
+#include "BossShadowKnight.h"
 
 ABossArenaGate::ABossArenaGate()
 {
@@ -16,24 +19,13 @@ ABossArenaGate::ABossArenaGate()
 	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
 	RootComponent = SceneRoot;
 
-	// Arched Stone Frame
+	// 1. Arched Stone Frame (centered at doorway threshold)
 	FrameMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("FrameMesh"));
 	FrameMesh->SetupAttachment(RootComponent);
+	FrameMesh->SetRelativeLocation(FVector::ZeroVector);
+	FrameMesh->SetRelativeRotation(FRotator::ZeroRotator);
 	FrameMesh->SetCollisionProfileName(TEXT("BlockAll"));
-
-	// Heavy Iron Cell Door / Portcullis
-	GateMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("GateMesh"));
-	GateMesh->SetupAttachment(RootComponent);
-	GateMesh->SetRelativeScale3D(FVector(1.15f, 1.25f, 1.25f));
-	GateMesh->SetCollisionProfileName(TEXT("BlockAll"));
-
-	// Trigger Box positioned slightly inside the arena to detect entry
-	TriggerBox = CreateDefaultSubobject<UBoxComponent>(TEXT("TriggerBox"));
-	TriggerBox->SetupAttachment(RootComponent);
-	TriggerBox->SetRelativeLocation(FVector(0.0f, 120.0f, 100.0f));
-	TriggerBox->SetBoxExtent(FVector(160.0f, 80.0f, 120.0f));
-	TriggerBox->SetCollisionProfileName(TEXT("Trigger"));
-	TriggerBox->SetGenerateOverlapEvents(true);
+	FrameMesh->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
 
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> DoorwayMeshFinder(
 		TEXT("/Game/MedievalDungeon/Meshes/Architecture/Crypt/SM_Crypt_Doorway.SM_Crypt_Doorway"));
@@ -42,25 +34,77 @@ ABossArenaGate::ABossArenaGate()
 		FrameMesh->SetStaticMesh(DoorwayMeshFinder.Object);
 	}
 
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> GateMeshFinder(
-		TEXT("/Game/MedievalDungeon/Meshes/Architecture/Dungeon/SM_Cell_Door.SM_Cell_Door"));
-	if (GateMeshFinder.Succeeded())
+	// 2. Left Door Assembly (Native Hinge at Left Jamb: X = -131, Y = 11)
+	HingeLeft = CreateDefaultSubobject<USceneComponent>(TEXT("HingeLeft"));
+	HingeLeft->SetupAttachment(RootComponent);
+	HingeLeft->SetRelativeLocation(FVector(-131.0f, 11.0f, 0.0f));
+	HingeLeft->SetRelativeRotation(FRotator::ZeroRotator);
+
+	DoorLeftMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("DoorLeftMesh"));
+	DoorLeftMesh->SetupAttachment(HingeLeft);
+	DoorLeftMesh->SetRelativeLocation(FVector::ZeroVector);
+	DoorLeftMesh->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
+	DoorLeftMesh->SetRelativeScale3D(FVector(1.0f, 1.003f, 1.0f));
+	DoorLeftMesh->SetCollisionProfileName(TEXT("BlockAll"));
+	DoorLeftMesh->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> DoorLeftMeshFinder(
+		TEXT("/Game/MedievalDungeon/Meshes/Architecture/Dungeon/SM_DoorWay_Large_Door_Left.SM_DoorWay_Large_Door_Left"));
+	if (DoorLeftMeshFinder.Succeeded())
 	{
-		GateMesh->SetStaticMesh(GateMeshFinder.Object);
+		DoorLeftMesh->SetStaticMesh(DoorLeftMeshFinder.Object);
 	}
 
-	static ConstructorHelpers::FObjectFinder<UMaterialInterface> GateMatFinder(
-		TEXT("/Game/MedievalDungeon/Materials/M_Cell_Door_Front_Inst.M_Cell_Door_Front_Inst"));
-	if (GateMatFinder.Succeeded())
+	// 3. Right Door Assembly (Native Hinge at Right Jamb: X = +132, Y = 11)
+	HingeRight = CreateDefaultSubobject<USceneComponent>(TEXT("HingeRight"));
+	HingeRight->SetupAttachment(RootComponent);
+	HingeRight->SetRelativeLocation(FVector(132.0f, 11.0f, 0.0f));
+	HingeRight->SetRelativeRotation(FRotator::ZeroRotator);
+
+	DoorRightMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("DoorRightMesh"));
+	DoorRightMesh->SetupAttachment(HingeRight);
+	DoorRightMesh->SetRelativeLocation(FVector::ZeroVector);
+	DoorRightMesh->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
+	DoorRightMesh->SetRelativeScale3D(FVector(1.0f, 1.003f, 1.0f));
+	DoorRightMesh->SetCollisionProfileName(TEXT("BlockAll"));
+	DoorRightMesh->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> DoorRightMeshFinder(
+		TEXT("/Game/MedievalDungeon/Meshes/Architecture/Dungeon/SM_DoorWay_Large_Door_Right.SM_DoorWay_Large_Door_Right"));
+	if (DoorRightMeshFinder.Succeeded())
 	{
-		GateMesh->SetMaterial(0, GateMatFinder.Object);
+		DoorRightMesh->SetStaticMesh(DoorRightMeshFinder.Object);
 	}
 
-	static ConstructorHelpers::FObjectFinder<USoundBase> SoundFinder(
+	// 4. Approach Trigger Box (Corridor side Y = -160)
+	ApproachTrigger = CreateDefaultSubobject<UBoxComponent>(TEXT("ApproachTrigger"));
+	ApproachTrigger->SetupAttachment(RootComponent);
+	ApproachTrigger->SetRelativeLocation(FVector(0.0f, -160.0f, 100.0f));
+	ApproachTrigger->SetBoxExtent(FVector(160.0f, 90.0f, 130.0f));
+	ApproachTrigger->SetCollisionProfileName(TEXT("Trigger"));
+	ApproachTrigger->SetGenerateOverlapEvents(true);
+
+	// 5. Arena Entry Trigger Box (Inside room side Y = +200)
+	ArenaEntryTrigger = CreateDefaultSubobject<UBoxComponent>(TEXT("ArenaEntryTrigger"));
+	ArenaEntryTrigger->SetupAttachment(RootComponent);
+	ArenaEntryTrigger->SetRelativeLocation(FVector(0.0f, 200.0f, 100.0f));
+	ArenaEntryTrigger->SetBoxExtent(FVector(180.0f, 100.0f, 130.0f));
+	ArenaEntryTrigger->SetCollisionProfileName(TEXT("Trigger"));
+	ArenaEntryTrigger->SetGenerateOverlapEvents(true);
+
+	// 6. Sound Effects
+	static ConstructorHelpers::FObjectFinder<USoundBase> SlamFinder(
+		TEXT("/Game/ParagonGrux/Characters/Heroes/Grux/Sounds/SoundCues/Grux_Effort_LandHeavy.Grux_Effort_LandHeavy"));
+	if (SlamFinder.Succeeded())
+	{
+		SlamSound = SlamFinder.Object;
+	}
+
+	static ConstructorHelpers::FObjectFinder<USoundBase> CreakFinder(
 		TEXT("/Engine/VREditor/Sounds/VR_click1_Cue.VR_click1_Cue"));
-	if (SoundFinder.Succeeded())
+	if (CreakFinder.Succeeded())
 	{
-		GateSound = SoundFinder.Object;
+		CreakSound = CreakFinder.Object;
 	}
 
 	Tags.AddUnique(TEXT("BossArenaGate"));
@@ -70,26 +114,43 @@ void ABossArenaGate::BeginPlay()
 {
 	Super::BeginPlay();
 
-	TriggerBox->OnComponentBeginOverlap.AddDynamic(this, &ABossArenaGate::OnTriggerOverlapBegin);
+	ApproachTrigger->OnComponentBeginOverlap.AddDynamic(this, &ABossArenaGate::OnApproachOverlapBegin);
+	ArenaEntryTrigger->OnComponentBeginOverlap.AddDynamic(this, &ABossArenaGate::OnArenaEntryOverlapBegin);
 
 	if (bIsEntranceGate)
 	{
-		// Entrance starts open so player can enter
-		bIsOpen = true;
-		CurrentZ = OpenZOffset;
-		TargetZ = OpenZOffset;
-		GateMesh->SetRelativeLocation(FVector(0.0f, 0.0f, CurrentZ));
-		GateMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		// Entrance double doors start closed like house doors
+		bIsOpen = false;
+		CurrentLeftYaw = 0.0f;
+		CurrentRightYaw = 0.0f;
+		TargetLeftYaw = 0.0f;
+		TargetRightYaw = 0.0f;
+		HingeLeft->SetRelativeRotation(FRotator(0.0f, 0.0f, 0.0f));
+		HingeRight->SetRelativeRotation(FRotator(0.0f, 0.0f, 0.0f));
+
+		DoorLeftMesh->SetCollisionProfileName(TEXT("BlockAll"));
+		DoorRightMesh->SetCollisionProfileName(TEXT("BlockAll"));
+		DoorLeftMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+		DoorRightMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	}
 	else
 	{
-		// Exit gate starts closed until boss is killed
+		// Exit gate starts closed until boss is defeated
 		bIsOpen = false;
-		CurrentZ = 0.0f;
-		TargetZ = 0.0f;
-		GateMesh->SetRelativeLocation(FVector(0.0f, 0.0f, CurrentZ));
-		GateMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-		TriggerBox->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		CurrentLeftYaw = 0.0f;
+		CurrentRightYaw = 0.0f;
+		TargetLeftYaw = 0.0f;
+		TargetRightYaw = 0.0f;
+		HingeLeft->SetRelativeRotation(FRotator(0.0f, 0.0f, 0.0f));
+		HingeRight->SetRelativeRotation(FRotator(0.0f, 0.0f, 0.0f));
+
+		DoorLeftMesh->SetCollisionProfileName(TEXT("BlockAll"));
+		DoorRightMesh->SetCollisionProfileName(TEXT("BlockAll"));
+		DoorLeftMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+		DoorRightMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+
+		ApproachTrigger->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		ArenaEntryTrigger->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	}
 }
 
@@ -97,66 +158,135 @@ void ABossArenaGate::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	if (FMath::Abs(CurrentZ - TargetZ) > 1.0f)
+	// Entrance gate failsafe: if player walks inside the arena, seal doors shut immediately!
+	if (bIsEntranceGate && bIsOpen && !bHasSealed)
 	{
-		// Fast drop or smooth lift
-		const float Speed = (TargetZ < CurrentZ) ? 900.0f : 300.0f;
-		CurrentZ = FMath::FInterpConstantTo(CurrentZ, TargetZ, DeltaTime, Speed);
-		GateMesh->SetRelativeLocation(FVector(0.0f, 0.0f, CurrentZ));
-
-		if (CurrentZ <= 5.0f && TargetZ == 0.0f)
+		if (ACharacter* Player = UGameplayStatics::GetPlayerCharacter(this, 0))
 		{
-			GateMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+			const FVector LocalPos = GetTransform().InverseTransformPosition(Player->GetActorLocation());
+			// If player stepped past the doorway into the room (Local Y > 140)
+			if (LocalPos.Y > 140.0f && FMath::Abs(LocalPos.X) < 300.0f)
+			{
+				bHasSealed = true;
+				CloseGate();
+
+				ApproachTrigger->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+				ArenaEntryTrigger->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+				if (LinkedBoss.IsValid()) LinkedBoss->WakeUpAndEngage();
+				if (LinkedBossGrux.IsValid()) LinkedBossGrux->WakeUpAndEngage();
+				if (LinkedBossShadowKnight.IsValid()) LinkedBossShadowKnight->WakeUpAndEngage();
+			}
+		}
+	}
+
+	const float InterpSpeed = bIsOpen ? 3.5f : 10.0f; // Rapid heavy slam on close, smooth creak on open
+
+	if (FMath::Abs(CurrentLeftYaw - TargetLeftYaw) > 0.5f || FMath::Abs(CurrentRightYaw - TargetRightYaw) > 0.5f)
+	{
+		CurrentLeftYaw = FMath::FInterpTo(CurrentLeftYaw, TargetLeftYaw, DeltaTime, InterpSpeed);
+		CurrentRightYaw = FMath::FInterpTo(CurrentRightYaw, TargetRightYaw, DeltaTime, InterpSpeed);
+
+		HingeLeft->SetRelativeRotation(FRotator(0.0f, CurrentLeftYaw, 0.0f));
+		HingeRight->SetRelativeRotation(FRotator(0.0f, CurrentRightYaw, 0.0f));
+
+		if (!bIsOpen && FMath::Abs(CurrentLeftYaw) < 10.0f)
+		{
+			// Solid barrier when closed
+			DoorLeftMesh->SetCollisionProfileName(TEXT("BlockAll"));
+			DoorRightMesh->SetCollisionProfileName(TEXT("BlockAll"));
+			DoorLeftMesh->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+			DoorRightMesh->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+			DoorLeftMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+			DoorRightMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 		}
 	}
 }
 
 void ABossArenaGate::CloseGate()
 {
-	if (!bIsOpen) return;
+	if (!bIsOpen && FMath::Abs(TargetLeftYaw) < 1.0f) return;
 
 	bIsOpen = false;
-	TargetZ = 0.0f;
+	TargetLeftYaw = 0.0f;
+	TargetRightYaw = 0.0f;
 
-	if (GateSound)
+	if (SlamSound)
 	{
-		UGameplayStatics::PlaySoundAtLocation(this, GateSound, GetActorLocation());
+		UGameplayStatics::PlaySoundAtLocation(this, SlamSound, GetActorLocation(), 1.4f, 0.85f);
 	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[GATE] Heavy double doors slam shut!"));
 }
 
 void ABossArenaGate::OpenGate()
 {
+	// If this is an entrance gate that already sealed behind the player, NEVER reopen it!
+	if (bIsEntranceGate && bHasSealed)
+	{
+		return;
+	}
+
 	if (bIsOpen) return;
 
 	bIsOpen = true;
-	TargetZ = OpenZOffset;
-	GateMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	// Doors swing open into the room (Left to +90 deg, Right to -90 deg)
+	TargetLeftYaw = 90.0f;
+	TargetRightYaw = -90.0f;
 
-	if (GateSound)
+	// Clear collision while open so player can easily pass through
+	DoorLeftMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	DoorRightMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	if (CreakSound)
 	{
-		UGameplayStatics::PlaySoundAtLocation(this, GateSound, GetActorLocation());
+		UGameplayStatics::PlaySoundAtLocation(this, CreakSound, GetActorLocation(), 1.0f, 0.9f);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[GATE] Heavy double doors swing wide open!"));
+}
+
+void ABossArenaGate::OnApproachOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor* OtherActor,
+                                           UPrimitiveComponent* OtherComp, int32 OtherBodyIndex,
+                                           bool bFromSweep, const FHitResult& SweepResult)
+{
+	if (!bIsEntranceGate || bIsOpen || bHasSealed) return;
+
+	if (Cast<ACharacter>(OtherActor) && !OtherActor->ActorHasTag(TEXT("Boss")))
+	{
+		// Player arrived at the entrance doors - doors swing open into the arena!
+		OpenGate();
 	}
 }
 
-void ABossArenaGate::OnTriggerOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor* OtherActor,
-                                          UPrimitiveComponent* OtherComp, int32 OtherBodyIndex,
-                                          bool bFromSweep, const FHitResult& SweepResult)
+void ABossArenaGate::OnArenaEntryOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor* OtherActor,
+                                             UPrimitiveComponent* OtherComp, int32 OtherBodyIndex,
+                                             bool bFromSweep, const FHitResult& SweepResult)
 {
-	if (!bIsEntranceGate || !bIsOpen) return;
+	if (!bIsEntranceGate || bHasSealed) return;
 
-	if (Cast<ACharacter>(OtherActor) && !OtherActor->IsA(ABossMinotaur::StaticClass()))
+	if (Cast<ACharacter>(OtherActor) && !OtherActor->ActorHasTag(TEXT("Boss")))
 	{
-		// Player entered the arena! Seal the entrance gate!
+		// Player entered the arena room! Slam the doors shut behind them!
+		bHasSealed = true;
 		CloseGate();
 
-		// Disable trigger so it doesn't fire again
-		TriggerBox->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		// Disable triggers so it doesn't reopen during combat
+		ApproachTrigger->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		ArenaEntryTrigger->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
-		// Wake up the Minotaur!
+		// Wake up the respective boss!
 		if (LinkedBoss.IsValid())
 		{
 			LinkedBoss->WakeUpAndEngage();
 		}
+		if (LinkedBossGrux.IsValid())
+		{
+			LinkedBossGrux->WakeUpAndEngage();
+		}
+		if (LinkedBossShadowKnight.IsValid())
+		{
+			LinkedBossShadowKnight->WakeUpAndEngage();
+		}
 	}
 }
-

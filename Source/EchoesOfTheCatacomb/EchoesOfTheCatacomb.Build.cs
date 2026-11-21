@@ -19,7 +19,11 @@ public class EchoesOfTheCatacomb : ModuleRules
 			"GameplayStateTreeModule",
 			"UMG",
 			"Slate",
-			"SlateCore"
+			"SlateCore",
+			"MotionWarping",
+			"AnimGraphRuntime",
+			"Niagara",
+			"Test"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });

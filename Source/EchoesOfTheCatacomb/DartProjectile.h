@@ -32,7 +32,7 @@ public:
 	UProjectileMovementComponent* ProjectileMovement;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Projectile|Config")
-	float DamageAmount = 12.0f;
+	float DamageAmount = 3.0f;
 
 	UFUNCTION()
 	void OnHit(UPrimitiveComponent* HitComp, AActor* OtherActor,
