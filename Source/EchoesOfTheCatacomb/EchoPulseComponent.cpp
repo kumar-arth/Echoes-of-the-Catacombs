@@ -1,6 +1,8 @@
 ﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "EchoPulseComponent.h"
+#include "EchoesOfTheCatacombCharacter.h"
+#include "CompanionGuide.h"
 #include "DungeonGenerator.h"
 #include "Kismet/KismetMaterialLibrary.h"
 #include "Kismet/GameplayStatics.h"
@@ -232,10 +234,34 @@ void UEchoPulseComponent::TriggerPulse(FVector Origin, float InMaxRadius, float 
 void UEchoPulseComponent::TriggerPulseFromOwner()
 {
 	AActor* Owner = GetOwner();
-	if (Owner)
+	if (!Owner)
 	{
-		TriggerPulse(Owner->GetActorLocation(), DefaultMaxRadius, DefaultPulseSpeed, DefaultPulseColor);
+		return;
 	}
+
+	// Emerge from the companion guide if active
+	if (AEchoesOfTheCatacombCharacter* Char = Cast<AEchoesOfTheCatacombCharacter>(Owner))
+	{
+		if (ACompanionGuide* Companion = Char->GetCompanionInstance())
+		{
+			Companion->TriggerEcholocationPulse();
+			return;
+		}
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		if (AActor* Found = UGameplayStatics::GetActorOfClass(World, ACompanionGuide::StaticClass()))
+		{
+			if (ACompanionGuide* Companion = Cast<ACompanionGuide>(Found))
+			{
+				Companion->TriggerEcholocationPulse();
+				return;
+			}
+		}
+	}
+
+	TriggerPulse(Owner->GetActorLocation(), DefaultMaxRadius, DefaultPulseSpeed, DefaultPulseColor);
 }
 
 void UEchoPulseComponent::StopPulse()
@@ -261,9 +287,12 @@ void UEchoPulseComponent::UpdateMaterialParameters()
 	// Calculate smooth fade factor (1.0 at origin -> 0.0 at MaxRadius)
 	const float Fade = FMath::Clamp(1.0f - (CurrentRadius / ActiveMaxRadius), 0.0f, 1.0f);
 
+	// Oscillate bandwidth slightly with acoustic frequency for distinct sound wave ripples
+	const float SoundWaveRipple = PulseBandwidth * (1.0f + 0.18f * FMath::Sin(CurrentRadius * 0.04f));
+
 	UKismetMaterialLibrary::SetScalarParameterValue(GetWorld(), EchoMPC, FName(TEXT("PulseActive")), 1.0f);
 	UKismetMaterialLibrary::SetScalarParameterValue(GetWorld(), EchoMPC, FName(TEXT("PulseRadius")), CurrentRadius);
-	UKismetMaterialLibrary::SetScalarParameterValue(GetWorld(), EchoMPC, FName(TEXT("PulseBandwidth")), PulseBandwidth);
+	UKismetMaterialLibrary::SetScalarParameterValue(GetWorld(), EchoMPC, FName(TEXT("PulseBandwidth")), SoundWaveRipple);
 	UKismetMaterialLibrary::SetScalarParameterValue(GetWorld(), EchoMPC, FName(TEXT("PulseFade")), Fade);
 	UKismetMaterialLibrary::SetVectorParameterValue(GetWorld(), EchoMPC, FName(TEXT("PulseOrigin")), FLinearColor(CurrentOrigin.X, CurrentOrigin.Y, CurrentOrigin.Z, 1.0f));
 

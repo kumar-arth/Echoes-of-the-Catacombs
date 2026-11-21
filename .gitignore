@@ -28,3 +28,6 @@ Thumbs.db
 # Personal AI/editor config
 .cursor/
 .gemini/
+
+# Sensitive local credentials & API configs
+Config/VoiceApiConfig.ini
