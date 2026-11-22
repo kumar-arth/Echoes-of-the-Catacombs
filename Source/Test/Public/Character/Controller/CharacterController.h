@@ -57,6 +57,30 @@ protected:
 	void Input_UsePotion();
 
 	void Input_Echolocation();
+	void Input_CompanionVoiceStart();
+	void Input_CompanionVoiceStop();
+
+	UFUNCTION(Exec)
+	void SayCompanion(const FString& Command);
+
+	UFUNCTION(Exec)
+	void CompanionSay(const FString& Command);
+
+	UFUNCTION(Exec)
+	void CompanionVoiceTest();
+
+	UFUNCTION(Exec)
+	void SetGeminiKey(const FString& InApiKey);
+
+	UFUNCTION(Exec)
+	void SetGeminiModel(const FString& InModel);
+
+	UFUNCTION(Exec)
+	void OpenMicSettings();
+
+	UFUNCTION(Exec)
+	void TestMic();
+
 	void HandleApplicationActivationChanged(bool bIsActive);
 
 	/* ================= 增强输入资产声明 ================= */

@@ -478,4 +478,61 @@ public:
 
 	/** Returns FollowCamera subobject **/
 	FORCEINLINE class UCameraComponent* GetFollowCamera() const { return FollowCamera; }
+
+	/** Returns CompanionInstance subobject **/
+	UFUNCTION(BlueprintPure, Category="Companion")
+	class ACompanionGuide* GetCompanionInstance() const { return CompanionInstance; }
+
+	/** Starts capturing voice for companion command (Push-to-Talk pressed) */
+	UFUNCTION(BlueprintCallable, Category="Companion|Voice")
+	void StartCompanionListening();
+
+	/** Stops capturing voice and sends to companion LLM (Push-to-Talk released) */
+	UFUNCTION(BlueprintCallable, Category="Companion|Voice")
+	void StopCompanionListening();
+
+	/** Toggles voice listening on / off */
+	UFUNCTION(BlueprintCallable, Category="Companion|Voice")
+	void ToggleCompanionListening();
+
+	/** Console command for offline / text testing: "SayCompanion <command>" */
+	UFUNCTION(Exec)
+	void SayCompanion(const FString& Command);
+
+	/** Console command alias for offline / text testing: "Companion.Say <command>" */
+	UFUNCTION(Exec)
+	void CompanionSay(const FString& Command);
+
+	/** Runs 10-attempt voice diagnostics table: "Companion.VoiceTest" or "CompanionVoiceTest" */
+	UFUNCTION(Exec)
+	void CompanionVoiceTest();
+
+	/** Sets the Gemini API key from the in-game console: "SetGeminiKey <key>" */
+	UFUNCTION(Exec)
+	void SetGeminiKey(const FString& InApiKey);
+
+	/** Sets the Gemini model name from in-game console: "SetGeminiModel <model>" */
+	UFUNCTION(Exec)
+	void SetGeminiModel(const FString& InModel);
+
+	/** Opens Windows microphone privacy settings from in-game console: "OpenMicSettings" */
+	UFUNCTION(Exec)
+	void OpenMicSettings();
+
+	/** Runs a quick in-game microphone diagnostics test: "TestMic" */
+	UFUNCTION(Exec)
+	void TestMic();
+
+	/** Handles pressing 'F' to trigger companion echolocation pulse */
+	UFUNCTION(BlueprintCallable, Category = "Companion|Echo")
+	void TriggerCompanionEchoPulse();
+
+protected:
+	/** Companion class to spawn with this character */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Companion")
+	TSubclassOf<class ACompanionGuide> CompanionClass;
+
+	/** Active companion instance following this character */
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Companion")
+	TObjectPtr<class ACompanionGuide> CompanionInstance;
 };

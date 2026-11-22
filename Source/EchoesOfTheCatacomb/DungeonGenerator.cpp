@@ -356,6 +356,9 @@ void ADungeonGenerator::BeginPlay() {
       if (AController *C = PlayerPawn->GetController()) {
         C->SetControlRotation(FRotator(0.0f, 90.0f, 0.0f));
       }
+      if (AActor* CompanionActor = UGameplayStatics::GetActorOfClass(World, LoadClass<AActor>(nullptr, TEXT("/Script/EchoesOfTheCatacomb.CompanionGuide")))) {
+        CompanionActor->SetActorLocation(PlayerSpawnLocation + FVector(-30.0f, 55.0f, 75.0f));
+      }
     }
   };
 

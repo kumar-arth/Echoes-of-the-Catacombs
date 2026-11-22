@@ -24,6 +24,7 @@
 #include "Enemy/Enemy.h" 
 #include "Items/ItemOwnershipComponent.h"
 #include "World/CheckpointActor.h"
+#include "EngineUtils.h"
 
 namespace
 {
@@ -198,6 +199,8 @@ void ACharacterController::SetupInputComponent()
 	if (InputComponent)
 	{
 		InputComponent->BindKey(EKeys::F, IE_Pressed, this, &ACharacterController::Input_Echolocation);
+		InputComponent->BindKey(EKeys::V, IE_Pressed, this, &ACharacterController::Input_CompanionVoiceStart);
+		InputComponent->BindKey(EKeys::V, IE_Released, this, &ACharacterController::Input_CompanionVoiceStop);
 	}
 
 	if (UEnhancedInputComponent* EnhancedInputComponent = CastChecked<UEnhancedInputComponent>(InputComponent))
@@ -1432,8 +1435,33 @@ FString ACharacterController::GetDebugInputText() const
 }
 
 
+namespace
+{
+	static AActor* FindCompanionGuideActor(UWorld* World)
+	{
+		if (!World) return nullptr;
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (It->GetClass()->GetName().Contains(TEXT("CompanionGuide")))
+			{
+				return *It;
+			}
+		}
+		return nullptr;
+	}
+}
+
 void ACharacterController::Input_Echolocation()
 {
+	if (AActor* Comp = FindCompanionGuideActor(GetWorld()))
+	{
+		if (UFunction* Func = Comp->FindFunction(TEXT("TriggerEcholocationPulse")))
+		{
+			Comp->ProcessEvent(Func, nullptr);
+			return;
+		}
+	}
+
 	APawn* ControlledPawn = GetPawn();
 	if (!ControlledPawn)
 	{
@@ -1469,4 +1497,98 @@ void ACharacterController::Input_Echolocation()
 			TargetPulseComp->ProcessEvent(Func, nullptr);
 		}
 	}
+}
+
+void ACharacterController::Input_CompanionVoiceStart()
+{
+	if (AActor* Comp = FindCompanionGuideActor(GetWorld()))
+	{
+		if (UFunction* Func = Comp->FindFunction(TEXT("StartVoiceListening")))
+		{
+			Comp->ProcessEvent(Func, nullptr);
+		}
+	}
+}
+
+void ACharacterController::Input_CompanionVoiceStop()
+{
+	if (AActor* Comp = FindCompanionGuideActor(GetWorld()))
+	{
+		if (UFunction* Func = Comp->FindFunction(TEXT("StopVoiceListening")))
+		{
+			Comp->ProcessEvent(Func, nullptr);
+		}
+	}
+}
+
+void ACharacterController::SayCompanion(const FString& Command)
+{
+	if (AActor* Comp = FindCompanionGuideActor(GetWorld()))
+	{
+		if (UFunction* Func = Comp->FindFunction(TEXT("ProcessCommand")))
+		{
+			struct { FString InCmd; } Params{ Command };
+			Comp->ProcessEvent(Func, &Params);
+		}
+	}
+}
+
+void ACharacterController::CompanionSay(const FString& Command)
+{
+	SayCompanion(Command);
+}
+
+void ACharacterController::CompanionVoiceTest()
+{
+	ConsoleCommand(TEXT("Companion.VoiceTest"));
+}
+
+void ACharacterController::SetGeminiKey(const FString& InApiKey)
+{
+	if (AActor* Comp = FindCompanionGuideActor(GetWorld()))
+	{
+		for (UActorComponent* C : Comp->GetComponents())
+		{
+			if (C && C->GetClass()->GetName().Contains(TEXT("CompanionVoiceComponent")))
+			{
+				if (UFunction* Func = C->FindFunction(TEXT("SetGeminiApiKey")))
+				{
+					struct { FString Key; } Params{ InApiKey };
+					C->ProcessEvent(Func, &Params);
+				}
+				break;
+			}
+		}
+	}
+}
+
+void ACharacterController::SetGeminiModel(const FString& InModel)
+{
+	if (AActor* Comp = FindCompanionGuideActor(GetWorld()))
+	{
+		for (UActorComponent* C : Comp->GetComponents())
+		{
+			if (C && C->GetClass()->GetName().Contains(TEXT("CompanionVoiceComponent")))
+			{
+				if (FProperty* Prop = C->GetClass()->FindPropertyByName(TEXT("GeminiModel")))
+				{
+					if (FStrProperty* StrProp = CastField<FStrProperty>(Prop))
+					{
+						StrProp->SetPropertyValue_InContainer(C, InModel);
+					}
+				}
+				break;
+			}
+		}
+	}
+}
+
+void ACharacterController::OpenMicSettings()
+{
+	FPlatformProcess::LaunchURL(TEXT("ms-settings:privacy-microphone"), nullptr, nullptr);
+}
+
+void ACharacterController::TestMic()
+{
+	Input_CompanionVoiceStart();
 }

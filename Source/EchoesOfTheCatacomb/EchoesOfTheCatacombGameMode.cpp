@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "EchoesOfTheCatacombGameMode.h"
+#include "CompanionGuide.h"
 #include "DungeonGenerator.h"
 #include "GameFramework/PlayerStart.h"
 #include "Kismet/GameplayStatics.h"
@@ -20,6 +21,29 @@ AEchoesOfTheCatacombGameMode::AEchoesOfTheCatacombGameMode()
 	if (PlayerControllerBPClass.Class != nullptr)
 	{
 		PlayerControllerClass = PlayerControllerBPClass.Class;
+	}
+}
+
+void AEchoesOfTheCatacombGameMode::StartPlay()
+{
+	Super::StartPlay();
+
+	// Ensure CompanionGuide is spawned and following the player
+	if (UWorld* World = GetWorld())
+	{
+		if (!UGameplayStatics::GetActorOfClass(World, ACompanionGuide::StaticClass()))
+		{
+			FActorSpawnParameters SpawnParams;
+			SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+			const FVector SpawnLoc = FVector(0.0f, 0.0f, 150.0f);
+			if (ACompanionGuide* Companion = World->SpawnActor<ACompanionGuide>(ACompanionGuide::StaticClass(), SpawnLoc, FRotator::ZeroRotator, SpawnParams))
+			{
+				if (APawn* PlayerPawn = UGameplayStatics::GetPlayerPawn(World, 0))
+				{
+					Companion->SetFollowTarget(PlayerPawn);
+				}
+			}
+		}
 	}
 }
 

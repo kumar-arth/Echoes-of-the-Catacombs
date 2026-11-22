@@ -23,6 +23,12 @@ public class EchoesOfTheCatacomb : ModuleRules
 			"MotionWarping",
 			"AnimGraphRuntime",
 			"Niagara",
+			"HTTP",
+			"Json",
+			"JsonUtilities",
+			"AudioCapture",
+			"AudioMixer",
+			"Voice",
 			"Test"
 		});
 

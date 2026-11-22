@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "EchoesOfTheCatacombCharacter.h"
+#include "CompanionGuide.h"
+#include "CompanionVoiceComponent.h"
 #include "MotionWarpingComponent.h"
 #include "EchoPulseComponent.h"
 #include "DungeonHUDWidget.h"
@@ -291,6 +293,8 @@ AEchoesOfTheCatacombCharacter::AEchoesOfTheCatacombCharacter()
 	CurrentHealth = MaxHealth;
 	CurrentStamina = MaxStamina;
 	StaminaRegenRate = 45.0f; // DS3 base stamina recovery (45/s)
+
+	CompanionClass = ACompanionGuide::StaticClass();
 }
 
 namespace
@@ -326,6 +330,31 @@ void AEchoesOfTheCatacombCharacter::BeginPlay()
 	bIsInvulnerable = false;
 	bIsSprinting = false;
 	CombatState = EPlayerCombatState::Idle;
+
+	// Check if a companion guide is already present in the level
+	if (!CompanionInstance && GetWorld())
+	{
+		CompanionInstance = Cast<ACompanionGuide>(UGameplayStatics::GetActorOfClass(GetWorld(), ACompanionGuide::StaticClass()));
+		if (CompanionInstance)
+		{
+			CompanionInstance->SetFollowTarget(this);
+		}
+	}
+
+	// Spawn companion guide if configured and not already found
+	if (CompanionClass && !CompanionInstance && GetWorld())
+	{
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.Owner = this;
+		SpawnParams.Instigator = this;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		const FVector SpawnLoc = GetActorLocation() + GetActorRotation().RotateVector(FVector(-30.0f, 55.0f, 75.0f));
+		CompanionInstance = GetWorld()->SpawnActor<ACompanionGuide>(CompanionClass, SpawnLoc, GetActorRotation(), SpawnParams);
+		if (CompanionInstance)
+		{
+			CompanionInstance->SetFollowTarget(this);
+		}
+	}
 
 	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
 	{
@@ -928,6 +957,10 @@ void AEchoesOfTheCatacombCharacter::SetupPlayerInputComponent(UInputComponent* P
 
 	// F: ECHOLOCATION SCAN (Detect traps & mobs through walls)
 	PlayerInputComponent->BindKey(EKeys::F, IE_Pressed, this, &AEchoesOfTheCatacombCharacter::OnEcholocationPressed);
+
+	// Push-to-Talk for Companion Guide Voice (Hold 'V' to talk, release to send)
+	PlayerInputComponent->BindKey(EKeys::V, IE_Pressed, this, &AEchoesOfTheCatacombCharacter::StartCompanionListening);
+	PlayerInputComponent->BindKey(EKeys::V, IE_Released, this, &AEchoesOfTheCatacombCharacter::StopCompanionListening);
 
 	// Lock-On: Middle Mouse Button OR 'Q' key (toggle on/off, auto off on death)
 	PlayerInputComponent->BindKey(EKeys::MiddleMouseButton, IE_Pressed, this, &AEchoesOfTheCatacombCharacter::ToggleLockOn);
@@ -2404,4 +2437,159 @@ FRotator AEchoesOfTheCatacombCharacter::GetRotationWarpTarget() const
 	LookDir.Z = 0.0f;
 	if (LookDir.IsNearlyZero()) return GetActorRotation();
 	return LookDir.Rotation();
+}
+
+void AEchoesOfTheCatacombCharacter::StartCompanionListening()
+{
+	if (CompanionInstance && CompanionInstance->GetVoiceComponent())
+	{
+		CompanionInstance->GetVoiceComponent()->StartListening();
+	}
+}
+
+void AEchoesOfTheCatacombCharacter::StopCompanionListening()
+{
+	if (CompanionInstance && CompanionInstance->GetVoiceComponent())
+	{
+		CompanionInstance->GetVoiceComponent()->StopListening();
+	}
+}
+
+void AEchoesOfTheCatacombCharacter::ToggleCompanionListening()
+{
+	if (CompanionInstance && CompanionInstance->GetVoiceComponent())
+	{
+		CompanionInstance->GetVoiceComponent()->ToggleListening();
+	}
+}
+
+void AEchoesOfTheCatacombCharacter::SayCompanion(const FString& Command)
+{
+	FString CleanCommand = Command.TrimStartAndEnd();
+
+	if (!CompanionInstance && GetWorld())
+	{
+		CompanionInstance = Cast<ACompanionGuide>(UGameplayStatics::GetActorOfClass(GetWorld(), ACompanionGuide::StaticClass()));
+		if (CompanionInstance)
+		{
+			CompanionInstance->SetFollowTarget(this);
+		}
+	}
+
+	if (!CompanionInstance)
+	{
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red, TEXT("[SayCompanion]: [ERROR] No CompanionGuide found in level!"));
+		}
+		UE_LOG(LogEchoesOfTheCatacomb, Error, TEXT("[SayCompanion]: No CompanionGuide found in world."));
+		return;
+	}
+
+	if (CleanCommand.IsEmpty() || CleanCommand.Equals(TEXT("help"), ESearchCase::IgnoreCase))
+	{
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 9.0f, FColor::Cyan, TEXT("=== Companion Verbal & Console Commands ==="));
+			GEngine->AddOnScreenDebugMessage(-1, 9.0f, FColor::White, TEXT("  SayCompanion stay     -> Hold position & stay anchored in place"));
+			GEngine->AddOnScreenDebugMessage(-1, 9.0f, FColor::White, TEXT("  SayCompanion follow   -> Follow close at right shoulder"));
+			GEngine->AddOnScreenDebugMessage(-1, 9.0f, FColor::White, TEXT("  SayCompanion run      -> Fall back to safe standoff distance (5m)"));
+			GEngine->AddOnScreenDebugMessage(-1, 9.0f, FColor::White, TEXT("  SayCompanion scout    -> Scout hallway ahead (14m)"));
+			GEngine->AddOnScreenDebugMessage(-1, 9.0f, FColor::White, TEXT("  SayCompanion concuss  -> Stun/dash closest enemy"));
+			GEngine->AddOnScreenDebugMessage(-1, 9.0f, FColor::White, TEXT("  SayCompanion distract -> Strobe light bait monsters"));
+			GEngine->AddOnScreenDebugMessage(-1, 9.0f, FColor::White, TEXT("  SayCompanion pulse    -> Echolocation pulse (or press 'F')"));
+			GEngine->AddOnScreenDebugMessage(-1, 9.0f, FColor::White, TEXT("  SayCompanion traps    -> Scan for traps"));
+			GEngine->AddOnScreenDebugMessage(-1, 9.0f, FColor::White, TEXT("  SayCompanion danger   -> Sense danger / count hostiles"));
+			GEngine->AddOnScreenDebugMessage(-1, 9.0f, FColor::White, TEXT("  SayCompanion boss     -> Query boss health"));
+			GEngine->AddOnScreenDebugMessage(-1, 9.0f, FColor::White, TEXT("  SayCompanion exit     -> Guide to dungeon exit"));
+			GEngine->AddOnScreenDebugMessage(-1, 9.0f, FColor::White, TEXT("  Companion.Say <cmd>   -> Alias for SayCompanion"));
+		}
+		return;
+	}
+
+	if (CompanionInstance->GetVoiceComponent())
+	{
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan, FString::Printf(TEXT("[SayCompanion]: '%s'"), *CleanCommand));
+		}
+		CompanionInstance->GetVoiceComponent()->ProcessTextCommand(CleanCommand);
+	}
+}
+
+void AEchoesOfTheCatacombCharacter::CompanionSay(const FString& Command)
+{
+	SayCompanion(Command);
+}
+
+void AEchoesOfTheCatacombCharacter::CompanionVoiceTest()
+{
+	if (UCompanionVoiceComponent* Comp = UCompanionVoiceComponent::GetActiveVoiceComponent())
+	{
+		Comp->RunVoiceTest(true);
+	}
+	else if (CompanionInstance && CompanionInstance->GetVoiceComponent())
+	{
+		CompanionInstance->GetVoiceComponent()->RunVoiceTest(true);
+	}
+}
+
+void AEchoesOfTheCatacombCharacter::TriggerCompanionEchoPulse()
+{
+	if (CompanionInstance)
+	{
+		CompanionInstance->TriggerEcholocationPulse();
+	}
+	else if (UEchoPulseComponent* PulseComp = FindComponentByClass<UEchoPulseComponent>())
+	{
+		PulseComp->TriggerPulseFromOwner();
+	}
+}
+
+void AEchoesOfTheCatacombCharacter::SetGeminiKey(const FString& InApiKey)
+{
+	if (CompanionInstance && CompanionInstance->GetVoiceComponent())
+	{
+		CompanionInstance->GetVoiceComponent()->SetGeminiApiKey(InApiKey);
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(505, 5.0f, FColor::Green, TEXT("[Companion]: [OK] GEMINI_API_KEY successfully configured!"));
+		}
+	}
+}
+
+void AEchoesOfTheCatacombCharacter::SetGeminiModel(const FString& InModel)
+{
+	if (CompanionInstance && CompanionInstance->GetVoiceComponent())
+	{
+		CompanionInstance->GetVoiceComponent()->GeminiModel = InModel;
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(506, 5.0f, FColor::Green, FString::Printf(TEXT("[Companion]: [OK] Gemini Model set to: %s"), *InModel));
+		}
+	}
+}
+
+void AEchoesOfTheCatacombCharacter::OpenMicSettings()
+{
+	if (CompanionInstance && CompanionInstance->GetVoiceComponent())
+	{
+		CompanionInstance->GetVoiceComponent()->OpenWindowsMicrophoneSettings();
+	}
+	else
+	{
+		FPlatformProcess::LaunchURL(TEXT("ms-settings:privacy-microphone"), nullptr, nullptr);
+	}
+}
+
+void AEchoesOfTheCatacombCharacter::TestMic()
+{
+	if (CompanionInstance && CompanionInstance->GetVoiceComponent())
+	{
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(509, 5.0f, FColor::Cyan, TEXT("[Companion]: [TEST] Testing microphone capture... Hold 'V' and speak, then release."));
+		}
+		CompanionInstance->GetVoiceComponent()->StartListening();
+	}
 }
