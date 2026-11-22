@@ -15,29 +15,19 @@
 #include "Kismet/KismetMaterialLibrary.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/Actor.h"
-#include "DrawDebugHelpers.h"
 #include "Engine/Engine.h"
 
 UEchoPulseComponent::UEchoPulseComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.bStartWithTickEnabled = true;
-
-	// Automatically locate MPC_Echo if it exists in Content/Materials
-	static ConstructorHelpers::FObjectFinder<UMaterialParameterCollection> MPCFinder(
-		TEXT("/Game/Materials/MPC_Echo.MPC_Echo")
-	);
-	if (MPCFinder.Succeeded())
-	{
-		EchoMPC = MPCFinder.Object;
-	}
 }
 
 void UEchoPulseComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Ensure EchoMPC is loaded
+	// Ensure EchoMPC is loaded safely via LoadObject
 	if (!EchoMPC)
 	{
 		EchoMPC = LoadObject<UMaterialParameterCollection>(nullptr, TEXT("/Game/Materials/MPC_Echo.MPC_Echo"));
@@ -46,7 +36,7 @@ void UEchoPulseComponent::BeginPlay()
 	StopPulse(); // Reset parameters on level start
 	if (EchoMPC)
 	{
-		// Maze is lit (dimly lit with torches), keep BossRoomLight at 1.0f so post-process does not black out corridors
+		// Maze is default lit with torches, keep BossRoomLight at 1.0f so post-process shader never blacks out corridors
 		UKismetMaterialLibrary::SetScalarParameterValue(GetWorld(), EchoMPC, FName(TEXT("BossRoomLight")), 1.0f);
 		if (GetOwner() && GetWorld())
 		{
@@ -73,7 +63,7 @@ void UEchoPulseComponent::SetPulseEnabled(bool bEnabled)
 
 	bIsPulseEnabled = bEnabled;
 
-	// If disabled while a wave is currently expanding, kill it immediately!
+	// If disabled while a wave is currently expanding, stop it immediately
 	if (!bIsPulseEnabled && bIsPulseActive)
 	{
 		StopPulse();
@@ -86,7 +76,7 @@ void UEchoPulseComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	// Periodic check for boss room boundaries (runs every 0.1s for zero CPU overhead)
+	// Periodic check for boss room boundaries (every 0.1s)
 	if (bAutoManageBossRoomPulse)
 	{
 		BossRoomCheckTimer += DeltaTime;
@@ -97,7 +87,7 @@ void UEchoPulseComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 		}
 	}
 
-	// Keep maze lit (dimly lit via ambient/torches), keep BossRoomLight at 1.0f so post-process never blacks out corridors
+	// Keep maze default lit via torches, keep BossRoomLight at 1.0f so post-process never blacks out corridors
 	if (EchoMPC)
 	{
 		UKismetMaterialLibrary::SetScalarParameterValue(GetWorld(), EchoMPC, FName(TEXT("BossRoomLight")), 1.0f);
@@ -118,7 +108,7 @@ void UEchoPulseComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 		return;
 	}
 
-	// Advance wave radius each frame
+	// Advance wave radius each frame (the classic, smooth 850 cm/s pulse wave)
 	CurrentRadius += ActiveSpeed * DeltaTime;
 
 	if (CurrentRadius >= ActiveMaxRadius)
@@ -131,12 +121,6 @@ void UEchoPulseComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 
 	// Process reveals in distance order as the acoustic wave expands across them
 	ProcessSequentialReveals(CurrentRadius);
-
-	// Process acoustic wave reflections off catacomb walls
-	if (bEnableWallReflections)
-	{
-		ProcessWallReflections(CurrentRadius);
-	}
 }
 
 void UEchoPulseComponent::CheckBossRoomStatus()
@@ -166,7 +150,6 @@ void UEchoPulseComponent::CheckBossRoomStatus()
 
 	if (RoomIndex > 0)
 	{
-		// Player is INSIDE a boss arena!
 		CurrentBossRoomIndex = RoomIndex;
 		LastVisitedBossRoom = RoomIndex;
 
@@ -183,13 +166,11 @@ void UEchoPulseComponent::CheckBossRoomStatus()
 	}
 	else
 	{
-		// Player is OUTSIDE the boss arenas (in the maze corridors)
 		const bool bWasInside = (CurrentBossRoomIndex > 0);
 		CurrentBossRoomIndex = 0;
 
 		if (!bIsPulseEnabled)
 		{
-			// Check if boss defeat is required to re-enable
 			const bool bBossRequirementMet = !bRequireBossDefeatToReenable || DungeonGenerator->IsBossDefeated(LastVisitedBossRoom);
 
 			if (bBossRequirementMet)
@@ -233,23 +214,19 @@ void UEchoPulseComponent::TriggerPulse(FVector Origin, float InMaxRadius, float 
 	CurrentOrigin = Origin;
 	CurrentRadius = 0.0f;
 	ActiveMaxRadius = (InMaxRadius > 0.0f) ? InMaxRadius : DefaultMaxRadius;
-
-	// Trigger the 3-phase acoustic sound wave diaphragm animation on the companion orb
-	if (AActor* OwnerActor = GetOwner())
-	{
-		if (AEchoesOfTheCatacombCharacter* Char = Cast<AEchoesOfTheCatacombCharacter>(OwnerActor))
-		{
-			if (ACompanionGuide* Guide = Char->GetCompanionInstance())
-			{
-				Guide->StartSoundWaveAnimation();
-			}
-		}
-	}
 	ActiveSpeed = (InSpeed > 0.0f) ? InSpeed : DefaultPulseSpeed;
 	ActiveColor = InColor;
 
 	PendingReveals.Reset();
-	WallReflections.Reset();
+
+	// Trigger companion orb 3-phase physical diaphragm animation if companion exists
+	if (AActor* CompActor = UGameplayStatics::GetActorOfClass(World, ACompanionGuide::StaticClass()))
+	{
+		if (ACompanionGuide* Guide = Cast<ACompanionGuide>(CompActor))
+		{
+			Guide->StartSoundWaveAnimation();
+		}
+	}
 
 	AActor* Owner = GetOwner();
 	if (!Owner)
@@ -305,7 +282,7 @@ void UEchoPulseComponent::TriggerPulse(FVector Origin, float InMaxRadius, float 
 		APawn* Pawn = *It;
 		if (!IsValid(Pawn) || Pawn == Owner) continue;
 
-		// Strictly exclude all 3 bosses!
+		// Strictly exclude all 3 bosses
 		if (Pawn->IsA(ABossMinotaur::StaticClass()) ||
 			Pawn->IsA(ABossGrux::StaticClass()) ||
 			Pawn->IsA(ABossShadowKnight::StaticClass()))
@@ -326,37 +303,11 @@ void UEchoPulseComponent::TriggerPulse(FVector Origin, float InMaxRadius, float 
 		}
 	}
 
-	// 4. SORT ASCENDING BY DISTANCE (nearest to player reveals first, furthest reveals last!)
+	// 4. SORT ASCENDING BY DISTANCE (nearest hazards reveal first, furthest reveal last as wave reaches them!)
 	PendingReveals.Sort([](const FEchoPendingHazardReveal& A, const FEchoPendingHazardReveal& B)
 	{
 		return A.Distance < B.Distance;
 	});
-
-	// 5. Cast radial wall reflection rays (realistic Snell's law acoustic bounces)
-	if (bEnableWallReflections && NumReflectionRays > 0)
-	{
-		FCollisionQueryParams TraceParams(SCENE_QUERY_STAT(EchoWallTrace), false, Owner);
-		const FVector TraceStart = CurrentOrigin + FVector(0.0f, 0.0f, 40.0f);
-
-		for (int32 i = 0; i < NumReflectionRays; ++i)
-		{
-			const float AngleDeg = (360.0f / (float)NumReflectionRays) * (float)i;
-			const FVector RayDir = FRotator(0.0f, AngleDeg, 0.0f).Vector();
-			const FVector TraceEnd = TraceStart + (RayDir * ActiveMaxRadius);
-
-			FHitResult Hit;
-			if (World->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_WorldStatic, TraceParams))
-			{
-				FEchoWallReflection Reflection;
-				Reflection.ImpactPoint = Hit.ImpactPoint;
-				Reflection.ImpactNormal = Hit.ImpactNormal;
-				Reflection.ReflectedDirection = FMath::GetReflectionVector(RayDir, Hit.ImpactNormal);
-				Reflection.DistanceFromOrigin = Hit.Distance;
-				Reflection.bHasTriggered = false;
-				WallReflections.Add(Reflection);
-			}
-		}
-	}
 
 	// Emit acoustic noise to alert enemy AI hearing perception
 	if (Owner)
@@ -368,7 +319,7 @@ void UEchoPulseComponent::TriggerPulse(FVector Origin, float InMaxRadius, float 
 
 	if (bShowDebugMessages && GEngine)
 	{
-		const FString Msg = FString::Printf(TEXT("ECHOLOCATION PULSE: Expanding acoustic wave (%.0fm, %d hazards tracked)..."),
+		const FString Msg = FString::Printf(TEXT("ECHOLOCATION: Expanding post-process pulse wave (%.0fm, %d hazards tracked)..."),
 			ActiveMaxRadius / 100.0f, PendingReveals.Num());
 		GEngine->AddOnScreenDebugMessage(1003, 2.5f, FLinearColor(0.15f, 0.85f, 1.0f).ToFColor(true), Msg);
 	}
@@ -376,24 +327,27 @@ void UEchoPulseComponent::TriggerPulse(FVector Origin, float InMaxRadius, float 
 
 void UEchoPulseComponent::TriggerPulseFromOwner()
 {
-	AActor* Owner = GetOwner();
-	if (!Owner && GetWorld())
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	// If companion orb exists in the level, pulse from the companion!
+	if (AActor* CompActor = UGameplayStatics::GetActorOfClass(World, ACompanionGuide::StaticClass()))
 	{
-		Owner = UGameplayStatics::GetPlayerCharacter(GetWorld(), 0);
+		if (ACompanionGuide* Guide = Cast<ACompanionGuide>(CompActor))
+		{
+			Guide->TriggerEcholocationPulse();
+			return;
+		}
+	}
+
+	AActor* Owner = GetOwner();
+	if (!Owner)
+	{
+		Owner = UGameplayStatics::GetPlayerCharacter(World, 0);
 	}
 	if (!Owner)
 	{
 		return;
-	}
-
-	// If owner character has an active companion orb, pulse from the companion with the orb sound wave animation!
-	if (AEchoesOfTheCatacombCharacter* Char = Cast<AEchoesOfTheCatacombCharacter>(Owner))
-	{
-		if (Char->GetCompanionInstance())
-		{
-			Char->GetCompanionInstance()->TriggerEcholocationPulse();
-			return;
-		}
 	}
 
 	TriggerPulse(Owner->GetActorLocation(), DefaultMaxRadius, DefaultPulseSpeed, DefaultPulseColor);
@@ -409,7 +363,11 @@ void UEchoPulseComponent::StopPulse()
 	bIsPulseActive = false;
 	CurrentRadius = 0.0f;
 	PendingReveals.Empty();
-	WallReflections.Empty();
+
+	if (!EchoMPC && GetWorld())
+	{
+		EchoMPC = LoadObject<UMaterialParameterCollection>(nullptr, TEXT("/Game/Materials/MPC_Echo.MPC_Echo"));
+	}
 
 	if (EchoMPC && GetWorld())
 	{
@@ -495,95 +453,14 @@ void UEchoPulseComponent::RevealTarget(FEchoPendingHazardReveal& Item)
 	// 3D Spatial Audio Ping
 	if (SonarPingSound && GetWorld())
 	{
-		const float PitchMultiplier = FMath::Clamp(1.3f - (Item.Distance / ActiveMaxRadius) * 0.5f, 0.7f, 1.4f);
+		const float PitchMultiplier = FMath::Clamp(1.2f - (Item.Distance / ActiveMaxRadius) * 0.4f, 0.8f, 1.3f);
 		UGameplayStatics::PlaySoundAtLocation(GetWorld(), SonarPingSound, Item.Location, 1.0f, PitchMultiplier);
 	}
 
-	// Visual acoustic ping burst
-	if (GetWorld())
-	{
-		DrawDebugCircle(GetWorld(), Item.Location + FVector(0.0f, 0.0f, 20.0f), 55.0f, 24, FColor::Cyan, false, 0.8f, 0, 2.5f, FVector(0, 0, 1), FVector(1, 0, 0), false);
-		DrawDebugPoint(GetWorld(), Item.Location + FVector(0.0f, 0.0f, 40.0f), 12.0f, FColor(50, 220, 255), false, 0.8f);
-	}
-
-	if (bShowDebugMessages && GEngine)
+	if (bShowDebugMessages && GEngine && IsValid(Target))
 	{
 		const FString PingMsg = FString::Printf(TEXT("[SONAR PING]: %s pinged at %.1fm!"), *TargetName, Item.Distance / 100.0f);
-		GEngine->AddOnScreenDebugMessage(reinterpret_cast<uint64>(Target), 2.2f, FColor::Cyan, PingMsg);
-	}
-}
-
-void UEchoPulseComponent::ProcessWallReflections(float CurrentWaveRadius)
-{
-	for (FEchoWallReflection& Reflection : WallReflections)
-	{
-		if (!Reflection.bHasTriggered && CurrentWaveRadius >= Reflection.DistanceFromOrigin)
-		{
-			Reflection.bHasTriggered = true;
-			TriggerWallReflection(Reflection);
-		}
-	}
-}
-
-void UEchoPulseComponent::TriggerWallReflection(FEchoWallReflection& Reflection)
-{
-	UWorld* World = GetWorld();
-	if (!World)
-	{
-		return;
-	}
-
-	const FVector WallImpact = Reflection.ImpactPoint;
-	const FVector WallNormal = Reflection.ImpactNormal;
-	const FVector ReflectedDir = Reflection.ReflectedDirection;
-
-	// 1. Visual surface ripple: acoustic ring expanding on wall surface normal
-	DrawDebugCircle(World, WallImpact + WallNormal * 4.0f, 65.0f, 16, FColor(80, 210, 255), false, 0.5f, 0, 2.0f, WallNormal, FVector::CrossProduct(WallNormal, FVector::UpVector).GetSafeNormal(), false);
-
-	// 2. Play secondary wall echo reverberation SFX if assigned
-	if (WallEchoSound)
-	{
-		UGameplayStatics::PlaySoundAtLocation(World, WallEchoSound, WallImpact, 0.6f, 0.9f);
-	}
-
-	// 3. Cast secondary reflected ray along ReflectedDir to reveal hazards around corners / behind walls
-	const FVector SecStart = WallImpact + (WallNormal * 6.0f);
-	const FVector SecEnd = SecStart + (ReflectedDir * ReflectedRayMaxDistance);
-
-	// Draw subtle acoustic reflected trace line
-	DrawDebugLine(World, SecStart, SecEnd, FColor(40, 180, 255, 180), false, 0.6f, 0, 1.5f);
-
-	FCollisionQueryParams SecParams(SCENE_QUERY_STAT(EchoWallBounce), false, GetOwner());
-	TArray<FHitResult> HitResults;
-	World->LineTraceMultiByChannel(HitResults, SecStart, SecEnd, ECC_WorldDynamic, SecParams);
-
-	for (const FHitResult& Hit : HitResults)
-	{
-		AActor* HitActor = Hit.GetActor();
-		if (!IsValid(HitActor)) continue;
-
-		if (ASpikeTrap* Spike = Cast<ASpikeTrap>(HitActor))
-		{
-			Spike->HighlightTrap(HighlightDuration);
-			if (bShowDebugMessages && GEngine)
-			{
-				GEngine->AddOnScreenDebugMessage(reinterpret_cast<uint64>(Spike), 2.5f, FColor(100, 230, 255), TEXT("[ECHO BOUNCE]: Hidden Spike Trap detected around corner!"));
-			}
-		}
-		else if (AWallDartTrap* Dart = Cast<AWallDartTrap>(HitActor))
-		{
-			Dart->HighlightTrap(HighlightDuration);
-			if (bShowDebugMessages && GEngine)
-			{
-				GEngine->AddOnScreenDebugMessage(reinterpret_cast<uint64>(Dart), 2.5f, FColor(100, 230, 255), TEXT("[ECHO BOUNCE]: Hidden Wall Dart Trap detected around corner!"));
-			}
-		}
-	}
-
-	// Make subtle acoustic noise at bounce location for enemy AI hearing
-	if (AActor* Owner = GetOwner())
-	{
-		Owner->MakeNoise(NoiseLoudness * 0.45f, Cast<APawn>(Owner), WallImpact);
+		GEngine->AddOnScreenDebugMessage((uint64)Target->GetUniqueID(), 2.2f, FColor::Cyan, PingMsg);
 	}
 }
 
@@ -616,6 +493,11 @@ void UEchoPulseComponent::UpdateHighlightedPawns(float DeltaTime)
 
 void UEchoPulseComponent::UpdateMaterialParameters()
 {
+	if (!EchoMPC && GetWorld())
+	{
+		EchoMPC = LoadObject<UMaterialParameterCollection>(nullptr, TEXT("/Game/Materials/MPC_Echo.MPC_Echo"));
+	}
+
 	if (!EchoMPC || !GetWorld())
 	{
 		return;

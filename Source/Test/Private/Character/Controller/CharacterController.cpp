@@ -1453,6 +1453,7 @@ namespace
 
 void ACharacterController::Input_Echolocation()
 {
+	// 1. If companion orb exists in the world, trigger through companion
 	if (AActor* Comp = FindCompanionGuideActor(GetWorld()))
 	{
 		if (UFunction* Func = Comp->FindFunction(TEXT("TriggerEcholocationPulse")))
@@ -1462,39 +1463,37 @@ void ACharacterController::Input_Echolocation()
 		}
 	}
 
+	// 2. Otherwise find or query EchoPulseComponent on the pawn or in world
 	APawn* ControlledPawn = GetPawn();
 	if (!ControlledPawn)
 	{
 		return;
 	}
 
-	UActorComponent* TargetPulseComp = nullptr;
 	for (UActorComponent* Comp : ControlledPawn->GetComponents())
 	{
 		if (Comp && Comp->GetClass()->GetName().Contains(TEXT("EchoPulseComponent")))
 		{
-			TargetPulseComp = Comp;
-			break;
-		}
-	}
-
-	if (!TargetPulseComp)
-	{
-		if (UClass* PulseCompClass = LoadClass<UActorComponent>(nullptr, TEXT("/Script/EchoesOfTheCatacomb.EchoPulseComponent")))
-		{
-			TargetPulseComp = NewObject<UActorComponent>(ControlledPawn, PulseCompClass, TEXT("DynamicEchoPulse"));
-			if (TargetPulseComp)
+			if (UFunction* Func = Comp->FindFunction(TEXT("TriggerPulseFromOwner")))
 			{
-				TargetPulseComp->RegisterComponent();
+				Comp->ProcessEvent(Func, nullptr);
+				return;
 			}
 		}
 	}
 
-	if (TargetPulseComp)
+	if (UWorld* World = GetWorld())
 	{
-		if (UFunction* Func = TargetPulseComp->FindFunction(TEXT("TriggerPulseFromOwner")))
+		for (TObjectIterator<UActorComponent> It; It; ++It)
 		{
-			TargetPulseComp->ProcessEvent(Func, nullptr);
+			if (It->GetWorld() == World && It->GetClass()->GetName().Contains(TEXT("EchoPulseComponent")))
+			{
+				if (UFunction* Func = It->FindFunction(TEXT("TriggerPulseFromOwner")))
+				{
+					It->ProcessEvent(Func, nullptr);
+					return;
+				}
+			}
 		}
 	}
 }

@@ -8,6 +8,9 @@
 #include <sapi.h>
 #include <objbase.h>
 #include "Windows/HideWindowsPlatformTypes.h"
+#ifdef PlaySound
+#undef PlaySound
+#endif
 #endif
 
 bool UCompanionKeywordRecognizer::ContainsNegationWord(const FString& InText)
