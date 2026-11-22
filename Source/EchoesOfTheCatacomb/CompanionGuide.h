@@ -262,6 +262,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Companion")
 	void SetTemporaryLightColor(FLinearColor NewColor, float Duration);
 
+	/** Starts the 3-phase physical acoustic diaphragm animation on the orb */
+	UFUNCTION(BlueprintCallable, Category = "Companion|Acoustics")
+	void StartSoundWaveAnimation()
+	{
+		bIsSoundWaveAnimating = true;
+		SoundWaveAnimTimer = 0.0f;
+		SetTemporaryLightColor(FLinearColor(0.15f, 0.95f, 1.0f), 0.65f);
+	}
+
 	UFUNCTION(BlueprintCallable, Category = "Companion")
 	void ResetLightToDefault();
 
@@ -287,6 +296,13 @@ private:
 	float RunningTime = 0.0f;
 	float TemporaryColorTimer = 0.0f;
 	float SoundWaveVibrationTimer = 0.0f;
+
+	/** Acoustic sound wave diaphragm 3-phase physical animation */
+	UPROPERTY(VisibleAnywhere, Category = "Companion|Acoustics")
+	bool bIsSoundWaveAnimating = false;
+
+	float SoundWaveAnimTimer = 0.0f;
+	float SoundWaveAnimDuration = 0.65f;
 
 	// Transient action variables
 	FVector ActionStartLocation = FVector::ZeroVector;

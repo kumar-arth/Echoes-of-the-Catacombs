@@ -119,27 +119,66 @@ void ACompanionGuide::Tick(float DeltaTime)
 		}
 	}
 
-	// Acoustic sound wave diaphragm vibration & light dissipation
-	if (SoundWaveVibrationTimer > 0.0f)
+	// Acoustic sound wave diaphragm 3-phase physical animation & light flash
+	if (bIsSoundWaveAnimating)
 	{
-		SoundWaveVibrationTimer -= DeltaTime;
-		const float Progress = 1.0f - FMath::Clamp(SoundWaveVibrationTimer / 0.35f, 0.0f, 1.0f);
-		// Dampened acoustic oscillation
-		const float Oscillation = FMath::Sin(Progress * PI * 4.0f) * (1.0f - Progress);
-		const float ScaleMult = 1.0f + (0.45f * Oscillation);
-		if (SphereMesh)
-		{
-			SphereMesh->SetRelativeScale3D(FVector(0.35f * ScaleMult));
-		}
+		SoundWaveAnimTimer += DeltaTime;
+		const float Phase1Dur = 0.08f; // Phase 1: Inhale / Contraction
+		const float Phase2Dur = 0.12f; // Phase 2: Explosive acoustic snap outward
+		const float Phase3Dur = 0.45f; // Phase 3: Damped ringing vibration
 
-		if (CompanionLight)
+		if (SoundWaveAnimTimer < Phase1Dur)
 		{
-			const float TargetIntensity = FMath::Lerp(5500.0f, 2000.0f, Progress);
-			CompanionLight->SetIntensity(TargetIntensity);
+			// Phase 1: Inhale / Contraction (0.35 -> 0.22)
+			const float Alpha = SoundWaveAnimTimer / Phase1Dur;
+			const float TargetScale = FMath::Lerp(0.35f, 0.22f, Alpha);
+			if (SphereMesh)
+			{
+				SphereMesh->SetRelativeScale3D(FVector(TargetScale));
+			}
+			if (CompanionLight)
+			{
+				CompanionLight->SetIntensity(FMath::Lerp(2000.0f, 3500.0f, Alpha));
+				CompanionLight->SetAttenuationRadius(FMath::Lerp(550.0f, 400.0f, Alpha));
+			}
 		}
-
-		if (SoundWaveVibrationTimer <= 0.0f)
+		else if (SoundWaveAnimTimer < (Phase1Dur + Phase2Dur))
 		{
+			// Phase 2: Explosive Snap Outward (0.22 -> 0.52 peak balloon)
+			const float Alpha = (SoundWaveAnimTimer - Phase1Dur) / Phase2Dur;
+			const float EaseOutAlpha = 1.0f - FMath::Square(1.0f - Alpha);
+			const float TargetScale = FMath::Lerp(0.22f, 0.52f, EaseOutAlpha);
+			if (SphereMesh)
+			{
+				SphereMesh->SetRelativeScale3D(FVector(TargetScale));
+			}
+			if (CompanionLight)
+			{
+				CompanionLight->SetIntensity(FMath::Lerp(3500.0f, 8000.0f, EaseOutAlpha));
+				CompanionLight->SetAttenuationRadius(FMath::Lerp(400.0f, 1000.0f, EaseOutAlpha));
+			}
+		}
+		else if (SoundWaveAnimTimer < (Phase1Dur + Phase2Dur + Phase3Dur))
+		{
+			// Phase 3: Damped Ringing Sine Vibration (0.52 -> settling to 0.35)
+			const float Alpha = (SoundWaveAnimTimer - Phase1Dur - Phase2Dur) / Phase3Dur;
+			const float Ringing = FMath::Sin(Alpha * PI * 8.0f) * (1.0f - Alpha) * 0.12f;
+			const float SettlingScale = FMath::Lerp(0.40f, 0.35f, Alpha) + Ringing;
+			if (SphereMesh)
+			{
+				SphereMesh->SetRelativeScale3D(FVector(SettlingScale));
+			}
+			if (CompanionLight)
+			{
+				CompanionLight->SetIntensity(FMath::Lerp(8000.0f, 2000.0f, Alpha));
+				CompanionLight->SetAttenuationRadius(FMath::Lerp(1000.0f, 550.0f, Alpha));
+			}
+		}
+		else
+		{
+			// Completed animation
+			bIsSoundWaveAnimating = false;
+			SoundWaveAnimTimer = 0.0f;
 			if (SphereMesh)
 			{
 				SphereMesh->SetRelativeScale3D(FVector(0.35f));
@@ -147,6 +186,7 @@ void ACompanionGuide::Tick(float DeltaTime)
 			if (CompanionLight)
 			{
 				CompanionLight->SetIntensity(2000.0f);
+				CompanionLight->SetAttenuationRadius(550.0f);
 			}
 		}
 	}

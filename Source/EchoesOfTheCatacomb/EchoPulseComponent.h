@@ -8,8 +8,66 @@
 #include "EchoPulseComponent.generated.h"
 
 class ADungeonGenerator;
+class USoundBase;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPulseStateChanged, bool, bIsEnabled);
+
+/** Record for a hazard or enemy waiting to be revealed in distance order as the acoustic wave expands */
+USTRUCT()
+struct FEchoPendingHazardReveal
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TWeakObjectPtr<AActor> TargetActor;
+
+	UPROPERTY()
+	FVector Location = FVector::ZeroVector;
+
+	UPROPERTY()
+	float Distance = 0.0f;
+
+	UPROPERTY()
+	bool bIsPawn = false;
+
+	UPROPERTY()
+	bool bHasRevealed = false;
+};
+
+/** Record for acoustic sound wave wall reflections and secondary corner echo traces */
+USTRUCT()
+struct FEchoWallReflection
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	FVector ImpactPoint = FVector::ZeroVector;
+
+	UPROPERTY()
+	FVector ImpactNormal = FVector::UpVector;
+
+	UPROPERTY()
+	FVector ReflectedDirection = FVector::ForwardVector;
+
+	UPROPERTY()
+	float DistanceFromOrigin = 0.0f;
+
+	UPROPERTY()
+	bool bHasTriggered = false;
+};
+
+/** Active highlighted pawn tracking for automatic depth-stencil and overlay expiration */
+USTRUCT()
+struct FEchoHighlightedPawn
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TWeakObjectPtr<APawn> Pawn;
+
+	UPROPERTY()
+	float TimeRemaining = 0.0f;
+};
 
 UCLASS(ClassGroup = (Echoes), meta = (BlueprintSpawnableComponent))
 class ECHOESOFTHECATACOMB_API UEchoPulseComponent : public UActorComponent
@@ -25,7 +83,7 @@ protected:
 public:
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
-	/** Triggers an expanding pulse from a specific world location */
+	/** Triggers an expanding acoustic pulse from a specific world location */
 	UFUNCTION(BlueprintCallable, Category = "Echo|Pulse")
 	void TriggerPulse(FVector Origin, float InMaxRadius = 3500.0f, float InSpeed = 1800.0f, FLinearColor InColor = FLinearColor(0.15f, 0.85f, 1.0f, 1.0f));
 
@@ -68,11 +126,11 @@ public:
 
 	/** Wave propagation speed (cm/s). 1800 = 18 meters/second */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Echo|Parameters")
-	float DefaultPulseSpeed = 850.0f;
+	float DefaultPulseSpeed = 1800.0f;
 
 	/** Maximum distance the wave travels before fading out */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Echo|Parameters")
-	float DefaultMaxRadius = 4000.0f;
+	float DefaultMaxRadius = 3500.0f;
 
 	/** Thickness of the visual pulse ring band */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Echo|Parameters")
@@ -82,9 +140,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Echo|Parameters")
 	FLinearColor DefaultPulseColor = FLinearColor(0.15f, 0.85f, 1.0f, 1.0f);
 
-	/** Detection radius for scanning traps and mobs (cm). 2200 = 22 meters */
+	/** Detection radius for scanning traps and mobs (cm). 2500 = 25 meters */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Echo|Parameters")
-	float ScanRadius = 2200.0f;
+	float ScanRadius = 2500.0f;
 
 	/** Duration in seconds highlighted objects remain visible through walls */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Echo|Parameters")
@@ -93,6 +151,26 @@ public:
 	/** Noise loudness to alert AI perception (0.0 to 1.0) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Echo|Acoustics")
 	float NoiseLoudness = 0.85f;
+
+	/** Whether sound waves reflect realistically off walls */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Echo|Acoustics")
+	bool bEnableWallReflections = true;
+
+	/** Number of radial rays cast to compute wall acoustic bounces (32 = 360 deg) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Echo|Acoustics")
+	int32 NumReflectionRays = 32;
+
+	/** Maximum distance secondary reflected echo rays travel around corners (cm) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Echo|Acoustics")
+	float ReflectedRayMaxDistance = 1000.0f;
+
+	/** Optional sound cue for sonar ping when a hazard is revealed */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Echo|Audio")
+	USoundBase* SonarPingSound;
+
+	/** Optional sound cue for acoustic reflection off catacomb walls */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Echo|Audio")
+	USoundBase* WallEchoSound;
 
 	// ========================================================================
 	// BOSS ROOM INTEGRATION
@@ -133,6 +211,20 @@ private:
 	int32 LastVisitedBossRoom = 0;
 	float BossRoomCheckTimer = 0.0f;
 
+	UPROPERTY()
+	TArray<FEchoPendingHazardReveal> PendingReveals;
+
+	UPROPERTY()
+	TArray<FEchoWallReflection> WallReflections;
+
+	UPROPERTY()
+	TArray<FEchoHighlightedPawn> ActiveHighlightedPawns;
+
 	void UpdateMaterialParameters();
 	void CheckBossRoomStatus();
+	void ProcessSequentialReveals(float CurrentWaveRadius);
+	void ProcessWallReflections(float CurrentWaveRadius);
+	void RevealTarget(FEchoPendingHazardReveal& Item);
+	void TriggerWallReflection(FEchoWallReflection& Reflection);
+	void UpdateHighlightedPawns(float DeltaTime);
 };

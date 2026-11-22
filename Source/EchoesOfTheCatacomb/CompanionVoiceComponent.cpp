@@ -52,6 +52,76 @@ static FAutoConsoleCommand GCompanionVoiceTestCmd(
 	})
 );
 
+// Console command: SetGeminiKey <key>
+static FAutoConsoleCommand GSetGeminiKeyCmd(
+	TEXT("SetGeminiKey"),
+	TEXT("Configures the Gemini API Key for the active Companion Guide."),
+	FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
+	{
+		if (Args.Num() == 0)
+		{
+			if (GEngine) GEngine->AddOnScreenDebugMessage(505, 5.0f, FColor::Red, TEXT("[Companion]: [ERROR] Usage: SetGeminiKey <api_key>"));
+			return;
+		}
+		const FString Key = Args[0].TrimStartAndEnd();
+		if (UCompanionVoiceComponent* Comp = UCompanionVoiceComponent::GetActiveVoiceComponent())
+		{
+			Comp->SetGeminiApiKey(Key);
+		}
+		const FString ConfigPath = FPaths::ProjectConfigDir() / TEXT("VoiceApiConfig.ini");
+		GConfig->SetString(TEXT("GeminiAPI"), TEXT("ApiKey"), *Key, ConfigPath);
+		GConfig->Flush(false, ConfigPath);
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(505, 5.0f, FColor::Green, TEXT("[Companion]: [OK] GEMINI_API_KEY successfully configured!"));
+		}
+		UE_LOG(LogTemp, Display, TEXT("[Companion]: GEMINI_API_KEY set successfully."));
+	})
+);
+
+// Console command: SetGeminiModel <model>
+static FAutoConsoleCommand GSetGeminiModelCmd(
+	TEXT("SetGeminiModel"),
+	TEXT("Configures the Gemini Model for the active Companion Guide (e.g. gemini-3.5-flash-lite)."),
+	FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
+	{
+		if (Args.Num() == 0) return;
+		const FString Model = Args[0].TrimStartAndEnd();
+		if (UCompanionVoiceComponent* Comp = UCompanionVoiceComponent::GetActiveVoiceComponent())
+		{
+			Comp->GeminiModel = Model;
+		}
+		const FString ConfigPath = FPaths::ProjectConfigDir() / TEXT("VoiceApiConfig.ini");
+		GConfig->SetString(TEXT("GeminiAPI"), TEXT("Model"), *Model, ConfigPath);
+		GConfig->Flush(false, ConfigPath);
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(506, 5.0f, FColor::Green, FString::Printf(TEXT("[Companion]: [OK] Gemini Model set to: %s"), *Model));
+		}
+	})
+);
+
+// Console command: SayCompanion <command>
+static FAutoConsoleCommand GSayCompanionCmd(
+	TEXT("SayCompanion"),
+	TEXT("Sends a text command to the active Companion Guide."),
+	FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
+	{
+		if (UCompanionVoiceComponent* Comp = UCompanionVoiceComponent::GetActiveVoiceComponent())
+		{
+			FString FullCmd = FString::Join(Args, TEXT(" ")).TrimStartAndEnd();
+			if (!FullCmd.IsEmpty())
+			{
+				Comp->ProcessTextCommand(FullCmd);
+			}
+		}
+		else if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(502, 5.0f, FColor::Red, TEXT("[Companion]: [ERROR] No active companion in level."));
+		}
+	})
+);
+
 UCompanionVoiceComponent::UCompanionVoiceComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
@@ -80,9 +150,9 @@ void UCompanionVoiceComponent::BeginPlay()
 		GeminiApiKey = FPlatformMisc::GetEnvironmentVariable(TEXT("GEMINI_API_KEY"));
 	}
 
-	if (GeminiModel.IsEmpty() || GeminiModel.Contains(TEXT("gemini-2.0")) || GeminiModel.Contains(TEXT("gemini-1.5")) || GeminiModel.Contains(TEXT("gemini-2.5")))
+	if (GeminiModel.IsEmpty() || GeminiModel.Contains(TEXT("gemini-2.0")) || GeminiModel.Contains(TEXT("gemini-1.5")) || GeminiModel.Contains(TEXT("gemini-2.5")) || GeminiModel.Contains(TEXT("flash-lite-latest")))
 	{
-		GeminiModel = TEXT("gemini-flash-lite-latest");
+		GeminiModel = TEXT("gemini-3.5-flash-lite");
 	}
 
 	// Initialize default local fast-path keyword/speech recognizer
@@ -501,7 +571,7 @@ TSharedPtr<FJsonObject> UCompanionVoiceComponent::BuildGeminiPayload(const TArra
 		TEXT("- 'follow', 'to me', 'heel', 'come with me', 'let's go' -> {\"command\": \"FOLLOW\", \"confidence\": 1.0}\n")
 		TEXT("- 'run', 'retreat', 'fall back', 'safe distance' -> {\"command\": \"RETREAT\", \"confidence\": 1.0}\n")
 		TEXT("- 'attack', 'concuss', 'stun', 'blast' -> {\"command\": \"ATTACK\", \"confidence\": 1.0}\n")
-		TEXT("- 'pulse', 'echo', 'ping', 'sonar' -> {\"command\": \"PULSE\", \"confidence\": 1.0}\n")
+		TEXT("- 'pulse', 'send pulse', 'send a pulse', 'echo', 'ping', 'sonar', 'sound wave' -> {\"command\": \"PULSE\", \"confidence\": 1.0}\n")
 		TEXT("- 'exit', 'way out', 'escape' -> {\"command\": \"EXIT\", \"confidence\": 1.0}\n")
 		TEXT("- 'traps', 'spikes', 'scan traps' -> {\"command\": \"TRAPS\", \"confidence\": 1.0}\n")
 		TEXT("- 'danger', 'threat', 'is it safe' -> {\"command\": \"DANGER\", \"confidence\": 1.0}\n")
@@ -686,6 +756,22 @@ void UCompanionVoiceComponent::OnGeminiResponseReceived(FHttpRequestPtr Request,
 			JsonRawText += PartObj->GetStringField(TEXT("text"));
 		}
 	}
+
+	// Sanitize markdown fences if present in model output
+	JsonRawText.TrimStartAndEndInline();
+	if (JsonRawText.StartsWith(TEXT("```json")))
+	{
+		JsonRawText.RemoveAt(0, 7);
+	}
+	else if (JsonRawText.StartsWith(TEXT("```")))
+	{
+		JsonRawText.RemoveAt(0, 3);
+	}
+	if (JsonRawText.EndsWith(TEXT("```")))
+	{
+		JsonRawText.LeftChopInline(3);
+	}
+	JsonRawText.TrimStartAndEndInline();
 
 	// Parse inner strict JSON { "command": "...", "confidence": 1.0 }
 	TSharedPtr<FJsonObject> InnerParsed;

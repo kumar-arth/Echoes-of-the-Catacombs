@@ -2197,22 +2197,7 @@ void AEchoesOfTheCatacombCharacter::OnEcholocationPressed()
 		return;
 	}
 
-	UEchoPulseComponent* PulseComp = FindComponentByClass<UEchoPulseComponent>();
-	if (PulseComp)
-	{
-		PulseComp->TriggerEcholocationScan();
-	}
-	else if (UWorld* World = GetWorld())
-	{
-		for (TObjectIterator<UEchoPulseComponent> It; It; ++It)
-		{
-			if (It->GetWorld() == World)
-			{
-				It->TriggerEcholocationScan();
-				break;
-			}
-		}
-	}
+	TriggerCompanionEchoPulse();
 }
 
 void AEchoesOfTheCatacombCharacter::ApplyHealing(float Healing, AActor* Healer)

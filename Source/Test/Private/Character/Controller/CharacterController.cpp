@@ -1545,6 +1545,14 @@ void ACharacterController::CompanionVoiceTest()
 
 void ACharacterController::SetGeminiKey(const FString& InApiKey)
 {
+	const FString CleanKey = InApiKey.TrimStartAndEnd();
+	if (CleanKey.IsEmpty())
+	{
+		if (GEngine) GEngine->AddOnScreenDebugMessage(505, 5.0f, FColor::Red, TEXT("[Companion]: [ERROR] Usage: SetGeminiKey <api_key>"));
+		return;
+	}
+
+	bool bFound = false;
 	if (AActor* Comp = FindCompanionGuideActor(GetWorld()))
 	{
 		for (UActorComponent* C : Comp->GetComponents())
@@ -1553,17 +1561,31 @@ void ACharacterController::SetGeminiKey(const FString& InApiKey)
 			{
 				if (UFunction* Func = C->FindFunction(TEXT("SetGeminiApiKey")))
 				{
-					struct { FString Key; } Params{ InApiKey };
+					struct { FString Key; } Params{ CleanKey };
 					C->ProcessEvent(Func, &Params);
+					bFound = true;
 				}
 				break;
 			}
 		}
 	}
+
+	const FString ConfigPath = FPaths::ProjectConfigDir() / TEXT("VoiceApiConfig.ini");
+	GConfig->SetString(TEXT("GeminiAPI"), TEXT("ApiKey"), *CleanKey, ConfigPath);
+	GConfig->Flush(false, ConfigPath);
+
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(505, 5.0f, FColor::Green, TEXT("[Companion]: [OK] GEMINI_API_KEY successfully configured!"));
+	}
+	UE_LOG(LogTemp, Display, TEXT("[Companion]: GEMINI_API_KEY set successfully."));
 }
 
 void ACharacterController::SetGeminiModel(const FString& InModel)
 {
+	const FString CleanModel = InModel.TrimStartAndEnd();
+	if (CleanModel.IsEmpty()) return;
+
 	if (AActor* Comp = FindCompanionGuideActor(GetWorld()))
 	{
 		for (UActorComponent* C : Comp->GetComponents())
@@ -1574,12 +1596,21 @@ void ACharacterController::SetGeminiModel(const FString& InModel)
 				{
 					if (FStrProperty* StrProp = CastField<FStrProperty>(Prop))
 					{
-						StrProp->SetPropertyValue_InContainer(C, InModel);
+						StrProp->SetPropertyValue_InContainer(C, CleanModel);
 					}
 				}
 				break;
 			}
 		}
+	}
+
+	const FString ConfigPath = FPaths::ProjectConfigDir() / TEXT("VoiceApiConfig.ini");
+	GConfig->SetString(TEXT("GeminiAPI"), TEXT("Model"), *CleanModel, ConfigPath);
+	GConfig->Flush(false, ConfigPath);
+
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(506, 5.0f, FColor::Green, FString::Printf(TEXT("[Companion]: [OK] Gemini Model set to: %s"), *CleanModel));
 	}
 }
 

@@ -182,9 +182,10 @@ bool UCompanionKeywordRecognizer::RecognizeCommand(const FString& InText, FCompa
 		return OutResult.Confidence >= 0.85f;
 	}
 
-	// PULSE: "pulse", "echo", "ping", "sonar"
+	// PULSE: "pulse", "send pulse", "send a pulse", "echo", "ping", "sonar", "sound wave", "acoustic pulse"
 	static const TArray<FString> PulseKeywords = {
-		TEXT("pulse"), TEXT("echo"), TEXT("ping"), TEXT("sonar")
+		TEXT("pulse"), TEXT("send pulse"), TEXT("send a pulse"), TEXT("echo"),
+		TEXT("ping"), TEXT("sonar"), TEXT("sound wave"), TEXT("acoustic pulse")
 	};
 	if (MatchesWholeWordOrPhrase(Normalized, Tokens, PulseKeywords))
 	{
@@ -368,7 +369,7 @@ bool UCompanionKeywordRecognizer::RunWindowsSapiSpeechRecognition(const TArray<i
 		L"follow", L"heel", L"return",
 		L"retreat", L"run", L"flee",
 		L"attack", L"strike", L"concuss", L"blast", L"stun",
-		L"pulse", L"echo", L"ping",
+		L"pulse", L"send pulse", L"echo", L"ping", L"sonar",
 		L"exit", L"escape",
 		L"traps", L"danger", L"boss", L"upgrade", L"distract"
 	};

@@ -50,9 +50,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Companion|LLM", meta = (DisplayName = "Gemini API Key"))
 	FString GeminiApiKey;
 
-	/** Gemini Model name (e.g. gemini-flash-lite-latest, gemini-3.5-flash, gemini-3.8-flash) */
+	/** Gemini Model name (e.g. gemini-3.5-flash-lite, gemini-3.8-flash) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Companion|LLM")
-	FString GeminiModel = TEXT("gemini-flash-lite-latest");
+	FString GeminiModel = TEXT("gemini-3.5-flash-lite");
 
 	/** Custom API Endpoint URL (empty uses Google official API) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Companion|LLM")
